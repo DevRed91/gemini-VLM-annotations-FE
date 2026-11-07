@@ -1,0 +1,422 @@
+{
+  "environment": {
+    "fixtureUrl": "http://127.0.0.1:5200/phase3.html?repetitions=20",
+    "viewerUrl": "http://127.0.0.1:5200/",
+    "browser": "headless Chromium",
+    "angle": "SwiftShader",
+    "fixtureViewport": [
+      640,
+      480
+    ],
+    "viewerViewport": [
+      640,
+      480
+    ]
+  },
+  "startedAt": "2026-11-07T17:25:12.514Z",
+  "tests": [
+    {
+      "name": "viewer injects two fixed real-scene detections with distinct visible index masks",
+      "passed": true,
+      "details": {
+        "rightDiff": {
+          "count": 31689,
+          "bbox": [
+            458,
+            159,
+            607,
+            435
+          ]
+        },
+        "leftDiff": {
+          "count": 63376,
+          "bbox": [
+            0,
+            0,
+            367,
+            300
+          ]
+        },
+        "selections": [
+          {
+            "objectId": 1,
+            "label": 1,
+            "count": 6121,
+            "color": [
+              1,
+              0,
+              1
+            ],
+            "worldSize": [
+              1.3501721197241605,
+              0.7281520477671171,
+              0.6181987647104283
+            ]
+          },
+          {
+            "objectId": 2,
+            "label": 2,
+            "count": 6921,
+            "color": [
+              0.6745098039215687,
+              1,
+              0.2196078431372549
+            ],
+            "worldSize": [
+              1.7379146428557724,
+              1.445325307740376,
+              1.0319024677873028
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "viewer clear-one restores the first object and hover preserves composition",
+      "passed": true,
+      "details": {
+        "restoreDiff": {
+          "count": 0,
+          "bbox": null
+        },
+        "hoverDiff": {
+          "count": 30029,
+          "bbox": [
+            461,
+            159,
+            607,
+            435
+          ]
+        },
+        "hoverClearDiff": {
+          "count": 0,
+          "bbox": null
+        }
+      }
+    },
+    {
+      "name": "viewer reload clears selections, helpers, annotations, and modifiers",
+      "passed": true,
+      "details": {
+        "state": {
+          "ready": true,
+          "mode": "index-mask",
+          "numSplats": 699086,
+          "annotationCount": 0,
+          "modifiers": 2,
+          "helpers": 0,
+          "selections": [],
+          "shaderErrors": []
+        },
+        "reloadDiff": {
+          "count": 0,
+          "bbox": null
+        }
+      }
+    },
+    {
+      "name": "viewer unsupported LOD source uses owned OBB fallback",
+      "passed": true,
+      "details": {
+        "fallbackState": {
+          "ready": true,
+          "mode": "obb-fallback",
+          "numSplats": 591166,
+          "annotationCount": 1,
+          "modifiers": 2,
+          "helpers": 1,
+          "selections": [],
+          "shaderErrors": []
+        },
+        "fallbackDiff": {
+          "count": 847,
+          "bbox": [
+            41,
+            20,
+            182,
+            140
+          ]
+        },
+        "clearDiff": {
+          "count": 0,
+          "bbox": null
+        }
+      }
+    },
+    {
+      "name": "viewer stale world loads cannot replace the latest world",
+      "passed": true,
+      "details": {
+        "loadResults": [
+          false,
+          true
+        ],
+        "finalState": {
+          "ready": true,
+          "mode": "obb-fallback",
+          "numSplats": 0,
+          "annotationCount": 0,
+          "modifiers": 1,
+          "helpers": 0,
+          "selections": [],
+          "shaderErrors": []
+        }
+      }
+    }
+  ],
+  "expectedTests": [
+    "OBB fitting produces normalized rigid transforms for basic, translated, and rotated points",
+    "non-unit OBB quaternions are rejected at lifting boundary",
+    "labels keep disjoint memberships and stable distinct colors",
+    "latest label wins overlaps and clearing restores the underlying label",
+    "label validation, deduplication, no-op suppression, and binary compatibility",
+    "two disjoint objects render simultaneously and clear-one restores exact independent pixels",
+    "overlap pixels follow update precedence and restore exactly",
+    "label masks retain 4096-row addressing and shifted-ID negative controls",
+    "coordinator updates only one object and never reuses IDs",
+    "stale selections are ignored after clear-one, clear-all, and disposal",
+    "hover, mask, and third-party effects compose with owned disposal",
+    "two selections survive rigid splat motion and repeated lifecycle cleanup",
+    "real Apartment.sog repeated selections meet measured resource and timing gates",
+    "viewer injects two fixed real-scene detections with distinct visible index masks",
+    "viewer clear-one restores the first object and hover preserves composition",
+    "viewer reload clears selections, helpers, annotations, and modifiers",
+    "viewer unsupported LOD source uses owned OBB fallback",
+    "viewer stale world loads cannot replace the latest world"
+  ],
+  "missingTests": [
+    "OBB fitting produces normalized rigid transforms for basic, translated, and rotated points",
+    "non-unit OBB quaternions are rejected at lifting boundary",
+    "labels keep disjoint memberships and stable distinct colors",
+    "latest label wins overlaps and clearing restores the underlying label",
+    "label validation, deduplication, no-op suppression, and binary compatibility",
+    "two disjoint objects render simultaneously and clear-one restores exact independent pixels",
+    "overlap pixels follow update precedence and restore exactly",
+    "label masks retain 4096-row addressing and shifted-ID negative controls",
+    "coordinator updates only one object and never reuses IDs",
+    "stale selections are ignored after clear-one, clear-all, and disposal",
+    "hover, mask, and third-party effects compose with owned disposal",
+    "two selections survive rigid splat motion and repeated lifecycle cleanup",
+    "real Apartment.sog repeated selections meet measured resource and timing gates"
+  ],
+  "unexpectedTests": [],
+  "duplicateTests": [],
+  "performance": null,
+  "viewer": {
+    "detections": {
+      "firstBox": [
+        0.1,
+        0.1,
+        0.5,
+        0.5
+      ],
+      "secondBox": [
+        0.4,
+        0.5,
+        0.8,
+        0.9
+      ],
+      "firstSelection": {
+        "objectId": 1,
+        "label": 1,
+        "count": 6121,
+        "color": [
+          1,
+          0,
+          1
+        ],
+        "worldSize": [
+          1.3501721197241605,
+          0.7281520477671171,
+          0.6181987647104283
+        ]
+      },
+      "secondSelection": {
+        "objectId": 2,
+        "label": 2,
+        "count": 6921,
+        "color": [
+          0.6745098039215687,
+          1,
+          0.2196078431372549
+        ],
+        "worldSize": [
+          1.7379146428557724,
+          1.445325307740376,
+          1.0319024677873028
+        ]
+      }
+    },
+    "states": {
+      "both": {
+        "ready": true,
+        "mode": "index-mask",
+        "numSplats": 699086,
+        "annotationCount": 2,
+        "modifiers": 2,
+        "helpers": 2,
+        "selections": [
+          {
+            "objectId": 1,
+            "label": 1,
+            "count": 6121,
+            "color": [
+              1,
+              0,
+              1
+            ],
+            "worldSize": [
+              1.3501721197241605,
+              0.7281520477671171,
+              0.6181987647104283
+            ]
+          },
+          {
+            "objectId": 2,
+            "label": 2,
+            "count": 6921,
+            "color": [
+              0.6745098039215687,
+              1,
+              0.2196078431372549
+            ],
+            "worldSize": [
+              1.7379146428557724,
+              1.445325307740376,
+              1.0319024677873028
+            ]
+          }
+        ],
+        "shaderErrors": []
+      },
+      "reloaded": {
+        "ready": true,
+        "mode": "index-mask",
+        "numSplats": 699086,
+        "annotationCount": 0,
+        "modifiers": 2,
+        "helpers": 0,
+        "selections": [],
+        "shaderErrors": []
+      },
+      "lodFallback": {
+        "ready": true,
+        "mode": "obb-fallback",
+        "numSplats": 591166,
+        "annotationCount": 1,
+        "modifiers": 2,
+        "helpers": 1,
+        "selections": [],
+        "shaderErrors": []
+      },
+      "afterStaleLoads": {
+        "ready": true,
+        "mode": "obb-fallback",
+        "numSplats": 0,
+        "annotationCount": 0,
+        "modifiers": 1,
+        "helpers": 0,
+        "selections": [],
+        "shaderErrors": []
+      }
+    },
+    "pixelDiffs": {
+      "rightVsBaseline": {
+        "count": 31689,
+        "bbox": [
+          458,
+          159,
+          607,
+          435
+        ]
+      },
+      "bothVsRight": {
+        "count": 63376,
+        "bbox": [
+          0,
+          0,
+          367,
+          300
+        ]
+      },
+      "clearOneVsIndependentReference": {
+        "count": 0,
+        "bbox": null
+      },
+      "hoverVsPersistent": {
+        "count": 30029,
+        "bbox": [
+          461,
+          159,
+          607,
+          435
+        ]
+      },
+      "reloadVsBaseline": {
+        "count": 0,
+        "bbox": null
+      },
+      "lodFallbackVsBaseline": {
+        "count": 847,
+        "bbox": [
+          41,
+          20,
+          182,
+          140
+        ]
+      }
+    }
+  },
+  "shaderErrors": [],
+  "finalGlError": 0,
+  "viewerFinalGlError": 0,
+  "consoleMessages": [
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "debug",
+      "text": "[vite] connecting..."
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "warning",
+      "text": "[.WebGL-0x1140083a200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "warning",
+      "text": "[.WebGL-0x1140083a200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "warning",
+      "text": "[.WebGL-0x1140083a200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "warning",
+      "text": "[.WebGL-0x1140083a200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "debug",
+      "text": "[vite] connected."
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently"
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently"
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "warning",
+      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently"
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": []
+}

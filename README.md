@@ -168,7 +168,7 @@ Implemented components:
 
 The final recorded Phase 2 validation reported:
 
-- 17 assertion-bearing checks passed.
+- 21 assertion-bearing checks passed.
 - Zero failed checks.
 - CPU and shader selection agreement.
 - Correct mask replacement and clearing.
@@ -181,5 +181,54 @@ A reference performance run on `Apartment.sog` with 699,086 splats reported:
 
 | Operation | Recorded time |
 |---|---:|
-| Full Gaussian lifting | 63.4 ms |
-| Gaussian source scan | 47.
+| Full Gaussian lifting | 58.2 ms |
+| Gaussian source scan | 43.7 ms |
+| Mask rewrite | 38.1 ms |
+| First visible highlight | Frame 2 |
+
+### Phase 3 — Multi-Object Index-Mask Integration
+
+**Status: Implemented; browser validation is in progress.**
+
+The integrated viewer defaults to the static, non-LOD `/Apartment.sog` source. A fitted world-space OBB is passed directly to `liftCluster()`; world-to-local conversion is used only for the wireframe helper and the unsupported-source OBB tint fallback.
+
+- One 4096-wide R8UI mask stores labels `1..255`; zero is unselected.
+- One 256-entry palette texture gives each object a stable, distinct color.
+- The most recently added or updated selection wins overlaps. Clearing it restores the most recent underlying membership.
+- `GaussianObjectHighlighter` serializes add/update, clear-one, clear-all, and disposal per world. IDs are not reused within a world.
+- Persistent masking is installed before transient hover tint. Each modifier and texture has an explicit disposal owner.
+- Reload clears annotation DOM, helpers, selections, hover state, textures, modifiers, and the old splat. Generation guards ignore stale loads and annotation responses.
+- LOD/paged sources are not index-lifted. Detected regions use the OBB tint fallback instead.
+
+This remains centre/OBB membership, not semantic segmentation; background Gaussians inside a fitted box may be included.
+
+## Browser validation
+
+Install dependencies and the one-time Chromium runtime:
+
+```bash
+npm install
+npx playwright install chromium
+```
+
+Run the regression and integration suites:
+
+```bash
+npm run validate:phase2
+npm run validate:phase3
+```
+
+Phase 3 defaults to 20 real-scene selection samples and writes `docs/phase3-results.json`. For a shorter development check, `PHASE3_REPETITIONS=2 npm run validate:phase3` reduces only the timing sample count; it is not the acceptance run.
+
+Both validators start their own Vite server. `PHASE2_URL` or `PHASE3_URL` can target an existing server, `CHROME_EXE` selects a Chromium executable, and `PLAYWRIGHT_MODULE` supports an external Playwright installation. The DEV-only `window.__sl.inject(label, box)` hook injects deterministic detections without contacting Gemini.
+
+For a manual smoke test, run `npm run dev`, create two annotations, check hover over each, close one annotation, reload the world, and repeat with `/Apartment-lod.rad` to exercise the OBB fallback.
+
+## Build and type checks
+
+```bash
+npm run build
+npx tsc --noEmit --incremental false
+```
+
+The no-emit check retains pre-existing diagnostics in `src/experiment/gaussianIdProbe.ts`, `src/utils/utils.ts`, and `src/worldlabs.ts`; Phase 3 files are expected to add none.

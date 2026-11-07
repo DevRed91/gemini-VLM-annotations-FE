@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { SplatMesh } from "@sparkjsdev/spark";
-import type { OBB } from "./hoverTint";
+import type { OBB } from "./obb";
+import { validateObb } from "./obb";
 import { assertNonLodSplat } from "./gaussianIndexSupport";
 
 export interface ClusterLiftOptions {
@@ -27,12 +28,6 @@ export interface ClusterLiftResult {
   diagnostics: ClusterLiftDiagnostics;
 }
 
-function assertFiniteVector(vector: THREE.Vector3, name: string): void {
-  if (!Number.isFinite(vector.x) || !Number.isFinite(vector.y) || !Number.isFinite(vector.z)) {
-    throw new RangeError(`${name} must contain only finite values`);
-  }
-}
-
 function validateInputs(splat: SplatMesh, obb: OBB, options: ClusterLiftOptions): {
   margin: number;
   minOpacity: number;
@@ -49,15 +44,7 @@ function validateInputs(splat: SplatMesh, obb: OBB, options: ClusterLiftOptions)
     throw new RangeError("minOpacity must be a finite number in [0, 1]");
   }
 
-  assertFiniteVector(obb.position, "obb.position");
-  assertFiniteVector(obb.size, "obb.size");
-  if (obb.size.x < 0 || obb.size.y < 0 || obb.size.z < 0) {
-    throw new RangeError("obb.size components must be non-negative");
-  }
-  const q = obb.quaternion;
-  if (![q.x, q.y, q.z, q.w].every(Number.isFinite) || q.lengthSq() < 1e-20) {
-    throw new RangeError("obb.quaternion must be finite and non-degenerate");
-  }
+  validateObb(obb);
 
   const numSplats = splat.numSplats;
   if (!Number.isSafeInteger(numSplats) || numSplats < 0) {

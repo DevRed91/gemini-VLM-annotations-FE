@@ -1,66 +1,18 @@
 import * as THREE from "three";
 import { dyno, SplatMesh } from "@sparkjsdev/spark";
+import type { GsplatModifier } from "@sparkjsdev/spark";
+import { OBB } from "./obb";
 
-/**
- * Oriented bounding box: rigid transform (position + rotation) plus full
- * size in world units. Scale is deliberately NOT baked into the matrix so the
- * shader's feather distance stays in world units.
- */
-export class OBB {
-  readonly position = new THREE.Vector3();
-  readonly quaternion = new THREE.Quaternion();
-  readonly size = new THREE.Vector3(1, 1, 1);
+export { OBB } from "./obb";
 
-  constructor(init?: {
-    position?: THREE.Vector3;
-    quaternion?: THREE.Quaternion;
-    size?: THREE.Vector3;
-  }) {
-    if (init?.position) this.position.copy(init.position);
-    if (init?.quaternion) this.quaternion.copy(init.quaternion);
-    if (init?.size) this.size.copy(init.size);
-  }
-
-  /** Build from an Object3D whose geometry is a box of `geometrySize`. */
-  static fromObject3D(obj: THREE.Object3D, geometrySize: THREE.Vector3): OBB {
-    return new OBB().syncFromObject3D(obj, geometrySize);
-  }
-
-  /** Re-read pose/scale from an Object3D (call after it moves). */
-  syncFromObject3D(obj: THREE.Object3D, geometrySize: THREE.Vector3): this {
-    obj.updateWorldMatrix(true, false);
-    const s = new THREE.Vector3();
-    obj.matrixWorld.decompose(this.position, this.quaternion, s);
-    // A mirrored object (negative scale) decomposes to a negative axis scale.
-    // A box is symmetric, so only the magnitude matters; a negative half-extent
-    // would make both the shader test and the ray test always fail.
-    s.set(Math.abs(s.x), Math.abs(s.y), Math.abs(s.z));
-    this.size.copy(geometrySize).multiply(s);
-    return this;
-  }
-
-  get halfExtents(): THREE.Vector3 {
-    return this.size.clone().multiplyScalar(0.5);
-  }
-
-  /** Box local -> world (rigid, no scale). */
-  getWorldMatrix(target = new THREE.Matrix4()): THREE.Matrix4 {
-    return target.compose(this.position, this.quaternion, UNIT_SCALE);
-  }
-}
-const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
-
-/**
- * Ray vs OBB (slab method in box-local space). Returns hit distance along the
- * ray (world units, ray.direction assumed normalized) or null on miss.
- */
+/** Ray vs OBB (slab method in box-local space). */
 const _inv = new THREE.Matrix4();
 const _o = new THREE.Vector3();
 const _d = new THREE.Vector3();
 export function rayIntersectsOBB(ray: THREE.Ray, obb: OBB): number | null {
   _inv.copy(obb.getWorldMatrix()).invert();
   _o.copy(ray.origin).applyMatrix4(_inv);
-  _d.copy(ray.direction).transformDirection(_inv); // rigid => length preserved
+  _d.copy(ray.direction).transformDirection(_inv);
 
   const h = obb.halfExtents;
   let tMin = 0;
@@ -70,18 +22,19 @@ export function rayIntersectsOBB(ray: THREE.Ray, obb: OBB): number | null {
   const e = [h.x, h.y, h.z];
 
   for (let i = 0; i < 3; i++) {
-    if (Math.abs(d[i]) < 1e-9) {
-      if (Math.abs(o[i]) > e[i]) return null; // parallel and outside slab
+    const axis = i;
+    if (Math.abs(d[axis]) < 1e-9) {
+      if (Math.abs(o[axis]) > e[axis]) return null;
       continue;
     }
-    let t1 = (-e[i] - o[i]) / d[i];
-    let t2 = (e[i] - o[i]) / d[i];
+    let t1 = (-e[axis] - o[axis]) / d[axis];
+    let t2 = (e[axis] - o[axis]) / d[axis];
     if (t1 > t2) [t1, t2] = [t2, t1];
     tMin = Math.max(tMin, t1);
     tMax = Math.min(tMax, t2);
     if (tMin > tMax) return null;
   }
-  return tMin;
+  return tMin >= 0 ? tMin : null;
 }
 
 /** Nearest OBB hit along the ray (so overlapping units pick the closest). */
@@ -94,20 +47,22 @@ export function pickNearestOBB<T extends { obb: OBB }>(
   for (const item of items) {
     const t = rayIntersectsOBB(ray, item.obb);
     if (t !== null && t < bestT) {
-      bestT = t;
       best = item;
+      bestT = t;
     }
   }
   return best;
 }
 
-/**
- * Zero-extra-draw-call hover tint. Installs a Spark dyno objectModifier that
- * tints splats whose center lies inside the hovered OBB. Object modifiers run
- * in splat-local space, so we feed Inverse(boxWorld) * splatWorld.
- *
- * Appends to `objectModifiers`, preserving previously installed effects.
- */
+export interface HoverTintOptions {
+  color?: readonly [number, number, number];
+  strength?: number;
+  feather?: number;
+  /** World boxes need a per-frame transform; splat-local boxes ride the mesh. */
+  space?: "world" | "splat";
+}
+
+/** Zero-extra-draw-call hover/persistent OBB tint with owned cleanup. */
 export class HoverTint {
   private splatToBox = dyno.dynoMat4(new THREE.Matrix4());
   private halfExtents = dyno.dynoVec3(new THREE.Vector3());
@@ -116,15 +71,26 @@ export class HoverTint {
   private strength = dyno.dynoFloat(0.45);
   private feather = dyno.dynoFloat(0.05);
   private current: OBB | null = null;
+  private modifier: GsplatModifier | null = null;
+  private disposed = false;
+  private readonly space: "world" | "splat";
 
   private _boxInv = new THREE.Matrix4();
   private _m = new THREE.Matrix4();
 
-  constructor(private splat: SplatMesh) {
+  constructor(private splat: SplatMesh, options: HoverTintOptions = {}) {
+    this.space = options.space ?? "world";
+    if (options.color) this.color.value.fromArray(options.color);
+    if (options.strength !== undefined) this.strength.value = options.strength;
+    if (options.feather !== undefined) this.feather.value = options.feather;
     this.install();
   }
 
-  private install() {
+  private assertActive(): void {
+    if (this.disposed) throw new Error("HoverTint has been disposed");
+  }
+
+  private install(): void {
     const tint = new dyno.Dyno({
       inTypes: {
         gsplat: dyno.Gsplat,
@@ -143,8 +109,6 @@ export class HoverTint {
             vec3 hvLocalPos = (${inputs.splatToBox} * vec4(${inputs.gsplat}.center, 1.0)).xyz;
             vec3 hvD = abs(hvLocalPos) - ${inputs.halfExtents};
             if (hvD.x <= 0.0 && hvD.y <= 0.0 && hvD.z <= 0.0) {
-              // hvD is <= 0 inside; feather over the outer band to avoid hard cuts.
-              // (smoothstep with edge0 > edge1 is undefined in GLSL, so invert instead.)
               float hvEdge = max(hvD.x, max(hvD.y, hvD.z));
               float hvMask = 1.0 - smoothstep(-max(${inputs.feather}, 1e-5), 0.0, hvEdge);
               ${outputs.gsplat}.rgba.rgb = mix(
@@ -169,20 +133,22 @@ export class HoverTint {
         }).gsplat,
       }),
     );
+    this.modifier = modifier;
     this.splat.objectModifiers = [...(this.splat.objectModifiers ?? []), modifier];
     this.splat.updateGenerator();
   }
 
-  setColor(r: number, g: number, b: number) {
+  setColor(r: number, g: number, b: number): void {
+    this.assertActive();
     this.color.value.set(r, g, b);
     this.splat.updateVersion();
   }
 
-  /** Set (or clear with null) the hovered box. Cheap no-op if unchanged. */
-  setHovered(obb: OBB | null) {
+  /** Set (or clear with null) the hovered box. */
+  setHovered(obb: OBB | null): void {
+    this.assertActive();
     if (obb === this.current && obb === null) return;
     this.current = obb;
-
     if (!obb) {
       this.active.value = 0;
     } else {
@@ -192,14 +158,39 @@ export class HoverTint {
     this.splat.updateVersion();
   }
 
-  /** Recompute uniforms if the hovered box or the splat mesh moved. */
-  refresh() {
+  /** Recompute uniforms if the hovered world box or splat mesh moved. */
+  refresh(): void {
+    if (this.disposed) return;
     const obb = this.current;
     if (!obb) return;
-    this.splat.updateWorldMatrix(true, false);
-    this._boxInv.copy(obb.getWorldMatrix()).invert();
-    this._m.multiplyMatrices(this._boxInv, this.splat.matrixWorld);
+    if (this.space === "world") {
+      this.splat.updateWorldMatrix(true, false);
+      this._boxInv.copy(obb.getWorldMatrix()).invert();
+      this._m.multiplyMatrices(this._boxInv, this.splat.matrixWorld);
+    } else {
+      this._m.identity();
+    }
     this.splatToBox.value.copy(this._m);
     this.halfExtents.value.copy(obb.halfExtents);
+  }
+
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.active.value = 0;
+    this.current = null;
+    if (this.modifier) {
+      const existing = this.splat.objectModifiers ?? [];
+      const remaining = existing.filter((modifier) => modifier !== this.modifier);
+      if (remaining.length !== existing.length) {
+        this.splat.objectModifiers = remaining;
+        this.splat.updateGenerator();
+      }
+    }
+    this.modifier = null;
   }
 }

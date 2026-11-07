@@ -42,13 +42,11 @@ function renderMainUI() {
   //   </div>
   // `
 
-  const controls = document.getElementById("controls")!;
-  const generateBtn = document.getElementById(
-    "generate-btn",
-  ) as HTMLButtonElement;
-  const apiKeyInput = document.getElementById("api-key") as HTMLInputElement;
-  const imageInput = document.getElementById("image-url") as HTMLInputElement;
-  const statusText = document.getElementById("status")!;
+  const generateBtn = document.getElementById("generate-btn") as HTMLButtonElement | null;
+  const apiKeyInput = document.getElementById("api-key") as HTMLInputElement | null;
+  const imageInput = document.getElementById("image-url") as HTMLInputElement | null;
+  const statusText = document.getElementById("status");
+  if (!generateBtn || !apiKeyInput || !imageInput || !statusText) return;
 
   const updateGenerateState = () => {
     generateBtn.disabled = imageInput.value.trim().length === 0;

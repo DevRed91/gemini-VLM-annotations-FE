@@ -14,6 +14,11 @@ import {
   isMobileDevice,
 } from "./utils/mobileJoystick";
 import { HoverTint, OBB, pickNearestOBB } from "./utils/hoverTint";
+import { fitOBB, obbWorldToLocal } from "./utils/obbFit";
+import GeometricContextManager from "./GeometricContextManager/GeometricContextManager";
+import { GaussianObjectHighlighter } from "./utils/gaussianObjectHighlighter";
+import { defaultGaussianMaskColor } from "./utils/gaussianMaskManager";
+import { isNonLodSplat } from "./utils/gaussianIndexSupport";
 // import { OrbitControls } from "three/examples/jsm/Addons.js";
 
 const API_BASE_URL =
@@ -39,7 +44,26 @@ function buildAnnotateEndpoint(baseUrl: string): string {
 
 interface AnnotationDetection {
   label: string;
-  box: [number, number, number, number];
+  description?: string;
+  box: [ymin: number, xmin: number, ymax: number, xmax: number];
+}
+
+interface DimensionSet {
+  width: number;
+  height: number;
+  depth: number;
+}
+
+interface ViewerAnnotation {
+  element: HTMLElement;
+  position: THREE.Vector3;
+  apartmentId: string;
+  worldObb?: OBB;
+  helper?: THREE.LineSegments;
+  fallbackTint?: HoverTint;
+  selectionOwner?: GaussianObjectHighlighter;
+  selectionId?: number;
+  worldGeneration: number;
 }
 
 export class SplatViewer {
@@ -50,21 +74,31 @@ export class SplatViewer {
   private controls: SparkControls;
   private cube!: THREE.Mesh;
   private currentSplat: SplatMesh | null = null;
-  private desiredCameraHeight = 0.15;
   private isMobile: boolean = isMobileDevice();
   private cameraRig = new THREE.Group();
   private animateT = dyno.dynoFloat(0);
   private baseTime = 0;
   private splatLoaded = false;
-  private annotations: { element: HTMLElement; position: THREE.Vector3 }[] = [];
-  private selectionBox: HTMLElement | null = null;
-  private startPoint: { x: number; y: number } | null = null;
+  private annotations: ViewerAnnotation[] = [];
   private isSelecting = false;
   private annotationLoadingEl: HTMLElement | null = null;
   private hoverTint: HoverTint | null = null;
+  private objectHighlighter: GaussianObjectHighlighter | null = null;
+  private worldGeneration = 0;
+  private annotationSequence = 0;
+  private readonly disposedSplats = new WeakSet<SplatMesh>();
+  private readonly geometricContext = new GeometricContextManager();
   private apartments: { id: string; obb: OBB; source?: THREE.Object3D; geomSize?: THREE.Vector3 }[] = [];
   private hoveredApartment: { id: string; obb: OBB } | null = null;
   private hoverRaycaster = new THREE.Raycaster();
+  private readonly shaderErrors: string[] = [];
+  public lastClusterFit: {
+    world: OBB;
+    local: OBB;
+    points: THREE.Vector3[];
+    method: string;
+    objectId?: number;
+  } | null = null;
 
   constructor() {
     this.scene = new THREE.Scene();
@@ -81,6 +115,15 @@ export class SplatViewer {
     this.scene.add(this.cameraRig);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    if (import.meta.env.DEV) {
+      this.renderer.debug.onShaderError = (gl, program, vertexShader, fragmentShader) => {
+        this.shaderErrors.push([
+          gl.getProgramInfoLog(program),
+          gl.getShaderInfoLog(vertexShader),
+          gl.getShaderInfoLog(fragmentShader),
+        ].filter(Boolean).join("\n"));
+      };
+    }
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(window.devicePixelRatio);
     document.body.appendChild(this.renderer.domElement);
@@ -89,6 +132,7 @@ export class SplatViewer {
     this.spark = new SparkRenderer({ renderer: this.renderer });
     this.scene.add(this.spark);
     this.cube = this.addBox();
+    this.addGroundPlane();
     // Transform, scale, and rotation gizmo disabled for now.
     // this.transformControls = new TransformControls(
     //   this.camera,
@@ -347,26 +391,109 @@ export class SplatViewer {
     return box;
   }
 
-  public async loadWorld(url: string) {
-    if (this.currentSplat) {
-      this.scene.remove(this.currentSplat);
-      this.currentSplat = null;
+  private disposeSplat(splat: SplatMesh): void {
+    if (this.disposedSplats.has(splat)) return;
+    this.disposedSplats.add(splat);
+    splat.removeFromParent();
+    splat.dispose();
+  }
+
+  private removeAnnotationVisual(annotation: ViewerAnnotation): void {
+    annotation.element.remove();
+    this.apartments = this.apartments.filter((item) => item.id !== annotation.apartmentId);
+    if (this.hoveredApartment?.id === annotation.apartmentId) {
+      this.hoveredApartment = null;
+      this.hoverTint?.setHovered(null);
     }
+    if (annotation.helper) {
+      annotation.helper.removeFromParent();
+      annotation.helper.geometry.dispose();
+      const materials = Array.isArray(annotation.helper.material)
+        ? annotation.helper.material
+        : [annotation.helper.material];
+      for (const material of materials) material.dispose();
+      annotation.helper = undefined;
+    }
+    annotation.fallbackTint?.dispose();
+    annotation.fallbackTint = undefined;
+  }
+
+  private clearAnnotationVisuals(): void {
+    for (const annotation of this.annotations) this.removeAnnotationVisual(annotation);
+    this.annotations = [];
+    this.hoveredApartment = null;
+    this.hoverTint?.setHovered(null);
+  }
+
+  private clearWorldResources(): void {
+    this.clearAnnotationVisuals();
+    this.hoverTint?.dispose();
+    this.hoverTint = null;
+    this.objectHighlighter?.dispose();
+    this.objectHighlighter = null;
+    if (this.currentSplat) this.disposeSplat(this.currentSplat);
+    this.currentSplat = null;
+    this.splatLoaded = false;
+    this.lastClusterFit = null;
+  }
+
+  public async clearAllSelections(): Promise<void> {
+    const owner = this.objectHighlighter;
+    this.clearAnnotationVisuals();
+    this.lastClusterFit = null;
+    await owner?.clearAll();
+  }
+
+  public async removeAnnotation(annotation: ViewerAnnotation): Promise<void> {
+    const index = this.annotations.indexOf(annotation);
+    if (index < 0) return;
+    this.annotations.splice(index, 1);
+    this.removeAnnotationVisual(annotation);
+    if (annotation.selectionOwner && annotation.selectionId !== undefined) {
+      await annotation.selectionOwner.clear(annotation.selectionId);
+    }
+  }
+
+  public async loadWorld(url: string): Promise<boolean> {
+    const generation = ++this.worldGeneration;
+    this.clearWorldResources();
+
     const splat = new SplatMesh({ url });
     splat.quaternion.set(1, 0, 0, 0);
     splat.position.set(0, -1.5, 0);
     this.currentSplat = splat;
-    this.scene.add(this.currentSplat);
-    this.splatLoaded = true;
+    this.scene.add(splat);
 
-    // setupSplatModifier(this.currentSplat);
-    this.hoverTint = new HoverTint(splat);
-    this.addGroundPlane();
-  }
-  private lockCameraHeightToGround() {
-    // Game-style: keep the rig at a fixed height above the world origin (Y=0 ground).
-    // The camera sits at local Y=0 inside the rig, so the rig's Y IS the eye height.
-    this.cameraRig.position.y = this.desiredCameraHeight;
+    try {
+      await splat.initialized;
+      if (generation !== this.worldGeneration) {
+        this.disposeSplat(splat);
+        return false;
+      }
+
+      const highlighter = isNonLodSplat(splat)
+        ? await GaussianObjectHighlighter.create(splat)
+        : null;
+      if (generation !== this.worldGeneration) {
+        highlighter?.dispose();
+        this.disposeSplat(splat);
+        return false;
+      }
+
+      // Persistent label masking is installed before transient hover tint.
+      this.objectHighlighter = highlighter;
+      this.hoverTint = new HoverTint(splat);
+      this.splatLoaded = true;
+      return true;
+    } catch (error) {
+      if (generation !== this.worldGeneration) {
+        this.disposeSplat(splat);
+        return false;
+      }
+      if (this.currentSplat === splat) this.clearWorldResources();
+      else this.disposeSplat(splat);
+      throw error;
+    }
   }
   private getAnnotationPosition(
     normalizedX: number,
@@ -404,79 +531,215 @@ export class SplatViewer {
 
   //   this.annotations.push({ element: div, position });
   // }
-  private getDepthKernel(x: number, y: number): number {
-    const gl = this.renderer.getContext();
-    const kernelSize = 2; // 5x5 grid
-    let minDepth = 1.0;
-    const pixelBuffer = new Float32Array(1);
-    const canvasHeight = this.renderer.domElement.height;
+  private createAnnotationElement(
+    position: THREE.Vector3,
+    label: string,
+    options: {
+      description?: string;
+      dimensions?: DimensionSet;
+      worldObb?: OBB;
+      localObb?: OBB;
+      selectionOwner?: GaussianObjectHighlighter;
+      selectionId?: number;
+    } = {},
+  ): ViewerAnnotation {
+    const container = document.createElement("div");
+    container.className = "annotation-container";
+    const pin = document.createElement("div");
+    pin.className = "annotation-pin";
+    const labelButton = document.createElement("button");
+    labelButton.type = "button";
+    labelButton.className = "annotation-label";
+    labelButton.textContent = label;
 
-    for (let i = -kernelSize; i <= kernelSize; i++) {
-        for (let j = -kernelSize; j <= kernelSize; j++) {
-            const px = Math.max(0, Math.min(this.renderer.domElement.width - 1, x + i));
-            const py = Math.max(0, Math.min(this.renderer.domElement.height - 1, y + j));
-            
-            // WebGL coordinate flip: (0,0) is bottom-left in GL, top-left in Browser
-            const glY = canvasHeight - py;
-            
-            gl.readPixels(px, glY, 1, 1, gl.DEPTH_COMPONENT, gl.FLOAT, pixelBuffer);
-            
-            if (pixelBuffer[0] < minDepth && pixelBuffer[0] > 0) {
-                minDepth = pixelBuffer[0];
-            }
-        }
-    }
-    return minDepth;
-}
-  private createAnnotationElement(position: THREE.Vector3, label: string) {
-    const container = document.createElement('div');
-    container.className = 'annotation-container';
-    
-    // Create the "Pin" (the dot)
-    const pin = document.createElement('div');
-    pin.className = 'annotation-pin';
-    
-    // Create the "Card" (the info)
-    const card = document.createElement('div');
-    card.className = 'annotation-card';
+    const card = document.createElement("div");
+    card.className = "annotation-card";
+    card.style.display = "none";
     const title = document.createElement("h3");
     title.textContent = label;
+    card.appendChild(title);
+    if (options.dimensions) {
+      const dimensions = document.createElement("p");
+      dimensions.textContent = [
+        options.dimensions.width,
+        options.dimensions.height,
+        options.dimensions.depth,
+      ].map((value) => `${value.toFixed(2)}m`).join(" × ");
+      card.appendChild(dimensions);
+    }
+    if (options.description) {
+      const description = document.createElement("p");
+      description.textContent = options.description;
+      card.appendChild(description);
+    }
     const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
     closeBtn.className = "close-btn";
     closeBtn.textContent = "Close";
-    card.appendChild(title);
     card.appendChild(closeBtn);
-    card.style.display = 'none'; // Hidden by default
 
-    // Interaction: Toggle card on pin click
-    pin.onclick = (e) => {
-        e.stopPropagation();
-        card.style.display = card.style.display === 'none' ? 'block' : 'none';
+    const toggleCard = (event: MouseEvent) => {
+      event.stopPropagation();
+      card.style.display = card.style.display === "none" ? "block" : "none";
     };
+    pin.onclick = toggleCard;
+    labelButton.onclick = toggleCard;
+    container.append(pin, labelButton, card);
 
-    closeBtn.addEventListener('click', () => {
-        card.style.display = 'none';
+    const annotation: ViewerAnnotation = {
+      element: container,
+      position: position.clone(),
+      apartmentId: `annotation-${++this.annotationSequence}`,
+      selectionOwner: options.selectionOwner,
+      selectionId: options.selectionId,
+      worldGeneration: this.worldGeneration,
+    };
+    closeBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void this.removeAnnotation(annotation);
     });
 
-    container.appendChild(pin);
-    container.appendChild(card);
-    document.body.appendChild(container);
+    if (options.worldObb && options.localObb) {
+      const colorId = ((options.selectionId ?? this.annotationSequence) - 1) % 255 + 1;
+      const color = defaultGaussianMaskColor(colorId);
+      annotation.worldObb = new OBB(options.worldObb);
+      this.registerApartment(annotation.apartmentId, annotation.worldObb);
 
-    this.annotations.push({ element: container, position });
-}
+      if (this.currentSplat) {
+        const box = new THREE.BoxGeometry(
+          options.localObb.size.x,
+          options.localObb.size.y,
+          options.localObb.size.z,
+        );
+        const edges = new THREE.EdgesGeometry(box);
+        box.dispose();
+        const helper = new THREE.LineSegments(
+          edges,
+          new THREE.LineBasicMaterial({ color: new THREE.Color().setRGB(...color) }),
+        );
+        helper.position.copy(options.localObb.position);
+        helper.quaternion.copy(options.localObb.quaternion);
+        this.currentSplat.add(helper);
+        annotation.helper = helper;
 
-  private annotateDetectedObject(box: AnnotationDetection["box"], label: string) {
-    const [xmin, ymin, xmax, ymax] = box;
-    const centerX = (xmin + xmax) / 2;
-    const centerY = (ymin + ymax) / 2;
-
-    const worldPos = this.getAnnotationPosition(centerX, centerY);
-    if (worldPos) {
-        this.createAnnotationElement(worldPos, label);
-    } else {
-        console.warn(`Lifting failed for ${label}`);
+        if (!options.selectionOwner) {
+          const fallback = new HoverTint(this.currentSplat, {
+            space: "splat",
+            color,
+            strength: 0.65,
+            feather: 0,
+          });
+          fallback.setHovered(options.localObb);
+          annotation.fallbackTint = fallback;
+        }
+      }
     }
-}
+
+    document.body.appendChild(container);
+    this.annotations.push(annotation);
+    return annotation;
+  }
+
+  private sanitizeDetectionBox(
+    box: AnnotationDetection["box"],
+  ): AnnotationDetection["box"] | null {
+    if (!Array.isArray(box) || box.length !== 4 || !box.every(Number.isFinite)) return null;
+    const [ymin, xmin, ymax, xmax] = box.map((value) =>
+      Math.min(1, Math.max(0, value))
+    ) as AnnotationDetection["box"];
+    if (xmax - xmin < 0.02 || ymax - ymin < 0.02) return null;
+    return [ymin, xmin, ymax, xmax];
+  }
+
+  /** Sample world-space ray hits; WebGL depth readback is deliberately avoided. */
+  private samplePointsFromBox(box: AnnotationDetection["box"]): THREE.Vector3[] {
+    const [ymin, xmin, ymax, xmax] = box;
+    const area = (xmax - xmin) * (ymax - ymin);
+    const nonLod = this.currentSplat ? isNonLodSplat(this.currentSplat) : false;
+    const minGridSize = 6;
+    const maxGridSize = nonLod ? 25 : 6;
+    const gridSize = Math.max(
+      minGridSize,
+      Math.min(maxGridSize, Math.round(minGridSize + (maxGridSize - minGridSize) * Math.sqrt(area))),
+    );
+    const points: THREE.Vector3[] = [];
+    for (let row = 0; row < gridSize; row++) {
+      for (let col = 0; col < gridSize; col++) {
+        const x = xmin + ((col + 0.5) / gridSize) * (xmax - xmin);
+        const y = ymin + ((row + 0.5) / gridSize) * (ymax - ymin);
+        const point = this.getAnnotationPosition(x, y);
+        if (point) points.push(point);
+      }
+    }
+    return points;
+  }
+
+  private async annotateFromDetection(
+    detection: AnnotationDetection,
+    clickWorldPosAtClick: THREE.Vector3 | null,
+  ): Promise<ViewerAnnotation | null> {
+    const generation = this.worldGeneration;
+    const splat = this.currentSplat;
+    if (!splat || !this.splatLoaded) return null;
+    const box = this.sanitizeDetectionBox(detection.box);
+    if (!box) {
+      console.warn("Discarding invalid or tiny detection bounding box.", detection.box);
+      return null;
+    }
+
+    const sampledPoints = this.samplePointsFromBox(box);
+    const measured = this.geometricContext.registerAndMeasureObject(
+      detection.label,
+      sampledPoints,
+      { eps: 0.3, minPts: isNonLodSplat(splat) ? 10 : 4 },
+    );
+    if (measured) {
+      const fit = fitOBB(measured.points);
+      if (fit) {
+        // Only the fallback/helper use world-to-local conversion; lifting stays world-space.
+        const local = obbWorldToLocal(fit.obb, splat);
+        const owner = this.objectHighlighter;
+        const selection = owner
+          ? await owner.select(fit.obb, { minOpacity: 0.05 })
+          : null;
+        if (owner && (!selection || generation !== this.worldGeneration)) return null;
+        if (generation !== this.worldGeneration || this.currentSplat !== splat) return null;
+
+        const annotation = this.createAnnotationElement(
+          measured.centroid,
+          measured.label,
+          {
+            description: detection.description,
+            dimensions: measured.dimensions,
+            worldObb: fit.obb,
+            localObb: local,
+            selectionOwner: owner ?? undefined,
+            selectionId: selection?.objectId,
+          },
+        );
+        this.lastClusterFit = {
+          world: new OBB(fit.obb),
+          local,
+          points: measured.points,
+          method: fit.method,
+          objectId: selection?.objectId,
+        };
+        return annotation;
+      }
+    }
+
+    const fallbackPosition = clickWorldPosAtClick ?? this.getAnnotationPosition(
+      (box[1] + box[3]) / 2,
+      (box[0] + box[2]) / 2,
+    );
+    if (!fallbackPosition) {
+      console.warn(`Lifting failed for ${detection.label}`);
+      return null;
+    }
+    return this.createAnnotationElement(fallbackPosition, detection.label, {
+      description: detection.description,
+    });
+  }
 
 private async captureSnapshot(): Promise<string> {
     // 1. Force a render to ensure scene is up to date
@@ -527,7 +790,8 @@ private async captureSnapshot(): Promise<string> {
     clickX: number,
     clickY: number,
     clickWorldPosAtClick: THREE.Vector3 | null,
-  ) {
+  ): Promise<void> {
+    const generation = this.worldGeneration;
     try {
       this.setAnnotationLoading(true);
       const dataUrl = await this.captureSnapshot();
@@ -537,10 +801,10 @@ private async captureSnapshot(): Promise<string> {
       const response = await fetch(buildAnnotateEndpoint(API_BASE_URL), {
         method: "POST",
         headers,
-        body: JSON.stringify({ 
-          image: dataUrl, 
-          clickX: clickX, 
-          clickY: clickY 
+        body: JSON.stringify({
+          image: dataUrl,
+          clickX,
+          clickY,
         }),
       });
 
@@ -555,19 +819,15 @@ private async captureSnapshot(): Promise<string> {
         console.warn("Expected annotation response array or data.objects array.", data);
       }
 
-      const anchorWorldPos = clickWorldPosAtClick;
-      detections.forEach((detection) => {
-        if (!detection?.label || !Array.isArray(detection.box) || detection.box.length !== 4) return;
-        if (anchorWorldPos) {
-          this.createAnnotationElement(anchorWorldPos.clone(), detection.label);
-          return;
-        }
-        this.annotateDetectedObject(detection.box as AnnotationDetection["box"], detection.label);
-      });
+      for (const detection of detections) {
+        if (generation !== this.worldGeneration) return;
+        if (!detection?.label || !Array.isArray(detection.box) || detection.box.length !== 4) continue;
+        await this.annotateFromDetection(detection, clickWorldPosAtClick);
+      }
     } catch (err) {
-      console.error("Museum Mode Error:", err);
+      if (generation === this.worldGeneration) console.error("Museum Mode Error:", err);
     } finally {
-      this.setAnnotationLoading(false);
+      if (generation === this.worldGeneration) this.setAnnotationLoading(false);
     }
   }
 }
@@ -581,6 +841,40 @@ export async function loadWorld(url: string) {
 }
 
 // Initial load
-const initialURL = "/Apartment-lod.rad";
+const initialURL = "/Apartment.sog";
 // const initialURL = "/BiltmoreGaussianSplat.sog";
-loadWorld(initialURL);
+void loadWorld(initialURL).catch((error) => console.error("Initial world load failed:", error));
+
+// DEV-only deterministic detection seam; no Gemini request is made by inject().
+if (import.meta.env.DEV) {
+  (window as any).__sl = {
+    viewer,
+    THREE,
+    get splat() { return (viewer as any).currentSplat; },
+    get camera() { return (viewer as any).camera; },
+    get ready() { return (viewer as any).splatLoaded; },
+    get mode() { return (viewer as any).objectHighlighter ? "index-mask" : "obb-fallback"; },
+    get lastFit() { return viewer.lastClusterFit; },
+    get selections() { return (viewer as any).objectHighlighter?.list() ?? []; },
+    get annotationCount() { return (viewer as any).annotations.length; },
+    get shaderErrors() { return [...(viewer as any).shaderErrors]; },
+    glError() { return (viewer as any).renderer.getContext().getError(); },
+    capture() {
+      const v = viewer as any;
+      v.renderer.render(v.scene, v.camera);
+      return v.renderer.domElement.toDataURL("image/png");
+    },
+    async inject(label: string, box: [number, number, number, number]) {
+      await (viewer as any).annotateFromDetection({ label, description: "test", box }, null);
+      return viewer.lastClusterFit;
+    },
+    async clearAll() { await viewer.clearAllSelections(); },
+    async clearOne(selectionId: number) {
+      const annotation = (viewer as any).annotations.find(
+        (item: ViewerAnnotation) => item.selectionId === selectionId,
+      );
+      if (annotation) await viewer.removeAnnotation(annotation);
+    },
+    async load(url: string) { return viewer.loadWorld(url); },
+  };
+}

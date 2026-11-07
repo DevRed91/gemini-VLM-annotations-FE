@@ -9,15 +9,22 @@ import type { SplatMesh } from "@sparkjsdev/spark";
  * but has `enableLod === false` still renders non-LOD, but is rejected
  * conservatively: its storage then contains a second, LOD-ordered splat set.
  */
-export function assertNonLodSplat(splat: SplatMesh, subject: string): void {
+export function nonLodSplatRejectionReason(splat: SplatMesh): string | null {
   const packed = splat.packedSplats as { lod?: unknown; lodSplats?: unknown } | undefined;
   const ext = splat.extSplats as { lod?: unknown; lodSplats?: unknown } | undefined;
-  const reason =
-    splat.paged ? "paged" :
+  return splat.paged ? "paged" :
     splat.enableLod === true ? "enableLod" :
     packed?.lodSplats || ext?.lodSplats ? "lodSplats" :
     packed?.lod || ext?.lod ? "lod" :
     null;
+}
+
+export function isNonLodSplat(splat: SplatMesh): boolean {
+  return nonLodSplatRejectionReason(splat) === null;
+}
+
+export function assertNonLodSplat(splat: SplatMesh, subject: string): void {
+  const reason = nonLodSplatRejectionReason(splat);
   if (reason) {
     throw new Error(
       `${subject} support only non-LOD, non-paged SplatMesh inputs (found ${reason})`,
