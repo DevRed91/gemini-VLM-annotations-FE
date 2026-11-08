@@ -18,6 +18,9 @@ import { fitOBB, obbWorldToLocal } from "./utils/obbFit";
 import { SpatialObjectRegistry } from "./utils/spatialObjectRegistry";
 import { searchObjects } from "./spatial/ObjectMatcher";
 import type { SearchOptions, SearchQuery } from "./spatial/types";
+import { ChatController } from "./chat/ChatController";
+import { ChatPanel } from "./chat/ChatPanel";
+import { deriveSearchAttributes } from "./chat/LocalQueryParser";
 import GeometricContextManager from "./GeometricContextManager/GeometricContextManager";
 import { GaussianObjectHighlighter } from "./utils/gaussianObjectHighlighter";
 import { defaultGaussianMaskColor } from "./utils/gaussianMaskManager";
@@ -97,6 +100,7 @@ export class SplatViewer {
    * `docs/chat-object-search-phase-0-registry.md` for the data contract.
    */
   private spatialRegistry: SpatialObjectRegistry | null = null;
+  private chatController: ChatController | null = null;
   private readonly disposedSplats = new WeakSet<SplatMesh>();
   private readonly geometricContext = new GeometricContextManager();
   private apartments: { id: string; obb: OBB; source?: THREE.Object3D; geomSize?: THREE.Vector3 }[] = [];
@@ -155,6 +159,7 @@ export class SplatViewer {
     this.setMobileControls();
     this.setupEventListeners();
     this.setupAnnotationUI();
+    this.setupChatUI();
     // this.setupSelectionBox();
     this.setupClickInteraction();
     this.setupLoadingUI();
@@ -260,6 +265,19 @@ export class SplatViewer {
         this.isSelecting = btn.classList.contains("active");
       });
     }
+  }
+
+  private setupChatUI(): void {
+    const panel = new ChatPanel(
+      (message) => { void this.chatController?.submitQuery(message); },
+      () => this.chatController?.clearConversation(),
+    );
+    this.chatController = new ChatController(
+      () => this.spatialRegistry?.list() ?? null,
+      (state) => panel.render(state),
+      searchObjects,
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    );
   }
   private updateAnnotationLabels() {
     this.annotations.forEach((ann) => {
@@ -371,6 +389,7 @@ export class SplatViewer {
     // Unregister happens here so single deletes, clear-all, and world switches
     // all leave the registry without the removed annotation's spatial object.
     this.spatialRegistry?.remove(annotation.apartmentId);
+    this.chatController?.inventoryChanged();
     annotation.element.remove();
     this.apartments = this.apartments.filter((item) => item.id !== annotation.apartmentId);
     if (annotation.helper) {
@@ -423,6 +442,7 @@ export class SplatViewer {
 
   public async loadWorld(url: string): Promise<boolean> {
     const generation = ++this.worldGeneration;
+    this.chatController?.setSceneStatus("loading");
     this.clearWorldResources();
 
     const splat = new SplatMesh({ url });
@@ -452,6 +472,7 @@ export class SplatViewer {
       // generated `annotation-N` IDs cannot collide across worlds either).
       this.spatialRegistry = new SpatialObjectRegistry();
       this.splatLoaded = true;
+      this.chatController?.setSceneStatus("ready");
       return true;
     } catch (error) {
       if (generation !== this.worldGeneration) {
@@ -460,6 +481,7 @@ export class SplatViewer {
       }
       if (this.currentSplat === splat) this.clearWorldResources();
       else this.disposeSplat(splat);
+      if (generation === this.worldGeneration) this.chatController?.setSceneStatus("unavailable");
       throw error;
     }
   }
@@ -610,6 +632,7 @@ export class SplatViewer {
       description: options.description,
       clusterObb: Boolean(annotation.worldObb),
     });
+    this.chatController?.inventoryChanged();
     return annotation;
   }
 
@@ -636,6 +659,7 @@ export class SplatViewer {
         objectId: annotation.apartmentId,
         semanticLabel: details.label,
         attributes: {
+          ...deriveSearchAttributes(details.label, details.description),
           ...(details.description ? { description: details.description } : {}),
           obb: details.clusterObb ? "cluster" : "point",
         },
