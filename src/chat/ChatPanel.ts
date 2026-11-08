@@ -11,13 +11,22 @@ export class ChatPanel {
   private open = false;
   private readonly onSubmit: (message: string) => void;
   private readonly onClear: () => void;
+  private readonly onSelectResult: (annotationId: string) => void;
+  private readonly onSelectAllResults: (annotationIds: readonly string[]) => void;
+  private readonly onClearSelection: () => void;
 
   constructor(
     onSubmit: (message: string) => void,
     onClear: () => void,
+    onSelectResult: (annotationId: string) => void,
+    onSelectAllResults: (annotationIds: readonly string[]) => void,
+    onClearSelection: () => void,
   ) {
     this.onSubmit = onSubmit;
     this.onClear = onClear;
+    this.onSelectResult = onSelectResult;
+    this.onSelectAllResults = onSelectAllResults;
+    this.onClearSelection = onClearSelection;
     const toolbar = document.getElementById("toolbar") ?? document.body;
     this.toggleButton = document.createElement("button");
     this.toggleButton.type = "button";
@@ -107,10 +116,40 @@ export class ChatPanel {
         const status = document.createElement("span");
         status.className = `spatial-chat__result-status spatial-chat__result-status--${item.status}`;
         status.textContent = item.status;
-        row.append(details, id, status);
+        const selectButton = document.createElement("button");
+        selectButton.type = "button";
+        selectButton.className = "spatial-chat__select-result";
+        selectButton.textContent = "Select in scene";
+        selectButton.setAttribute("aria-label", `Select ${item.label} (${item.annotationId}) in scene`);
+        selectButton.addEventListener("click", (event) => {
+          event.stopPropagation();
+          this.onSelectResult(item.annotationId);
+        });
+        row.append(details, id, status, selectButton);
         list.appendChild(row);
       }
       article.appendChild(list);
+
+      const actions = document.createElement("div");
+      actions.className = "spatial-chat__result-actions";
+      const selectAllButton = document.createElement("button");
+      selectAllButton.type = "button";
+      selectAllButton.className = "spatial-chat__select-all";
+      selectAllButton.textContent = "Select all in scene";
+      selectAllButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.onSelectAllResults(message.results?.map((item) => item.annotationId) ?? []);
+      });
+      const clearSelectionButton = document.createElement("button");
+      clearSelectionButton.type = "button";
+      clearSelectionButton.className = "spatial-chat__clear-selection";
+      clearSelectionButton.textContent = "Clear selection";
+      clearSelectionButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.onClearSelection();
+      });
+      actions.append(selectAllButton, clearSelectionButton);
+      article.appendChild(actions);
     }
     return article;
   }

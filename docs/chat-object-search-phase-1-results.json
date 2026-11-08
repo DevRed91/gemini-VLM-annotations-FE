@@ -8,7 +8,7 @@
       480
     ]
   },
-  "startedAt": "2026-11-08T14:48:35.199Z",
+  "startedAt": "2026-11-08T15:48:11.396Z",
   "tests": [
     {
       "name": "searching an empty registry is a controlled no-match",
@@ -456,22 +456,22 @@
     {
       "page": "http://127.0.0.1:5203/",
       "type": "warning",
-      "text": "[.WebGL-0x13c0083cc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+      "text": "[.WebGL-0x1240083c600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
     },
     {
       "page": "http://127.0.0.1:5203/",
       "type": "warning",
-      "text": "[.WebGL-0x13c0083cc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+      "text": "[.WebGL-0x1240083c600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
     },
     {
       "page": "http://127.0.0.1:5203/",
       "type": "warning",
-      "text": "[.WebGL-0x13c0083cc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+      "text": "[.WebGL-0x1240083c600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
     },
     {
       "page": "http://127.0.0.1:5203/",
       "type": "warning",
-      "text": "[.WebGL-0x13c0083cc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+      "text": "[.WebGL-0x1240083c600]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
     },
     {
       "page": "http://127.0.0.1:5203/",

@@ -18,6 +18,11 @@ export interface ChatMessage {
 
 export type ChatSceneStatus = "loading" | "ready" | "unavailable";
 
+export interface ChatSelectionAdapter {
+  setChatSelection(annotationIds: readonly string[]): void;
+  clearChatSelection(): void;
+}
+
 export interface ChatViewState {
   readonly messages: readonly ChatMessage[];
   readonly loading: boolean;
@@ -40,13 +45,16 @@ export class ChatController {
   private readonly onChange: (state: ChatViewState) => void;
   private readonly search: ChatSearch;
   private readonly yieldToRender: () => Promise<void>;
+  private readonly selectionAdapter: ChatSelectionAdapter | undefined;
 
   constructor(
     getInventory: InventoryProvider,
     onChange: (state: ChatViewState) => void,
     search: ChatSearch = searchObjects,
     yieldToRender: () => Promise<void> = () => Promise.resolve(),
+    selectionAdapter?: ChatSelectionAdapter,
   ) {
+    this.selectionAdapter = selectionAdapter;
     this.getInventory = getInventory;
     this.onChange = onChange;
     this.search = search;
@@ -62,6 +70,9 @@ export class ChatController {
   async submitQuery(message: string): Promise<void> {
     if (this.loading) return;
     this.pushMessage("user", message.trim());
+    // A submitted search starts from an explicitly unselected state. This
+    // prevents a previous search's emphasis from surviving into a new query.
+    this.clearSelection();
     if (!message.trim()) {
       this.pushMessage("assistant", "Enter an object to search for, such as “chair”.");
       this.emit();
@@ -108,12 +119,14 @@ export class ChatController {
   }
 
   clearConversation(): void {
+    this.clearSelection();
     this.messages = [];
     this.pushMessage("assistant", `Conversation cleared. ${ANNOTATION_SCOPE}`);
     this.emit();
   }
 
   setSceneStatus(status: ChatSceneStatus): void {
+    this.clearSelection();
     this.sceneVersion++;
     this.sceneStatus = status;
     this.loading = false;
@@ -128,6 +141,31 @@ export class ChatController {
       this.pushMessage("assistant", "Scene unavailable. Load a scene with annotations to search.");
     }
     this.emit();
+  }
+
+  selectAnnotation(annotationId: string): void {
+    if (this.sceneStatus !== "ready") return;
+    const inventory = this.getInventory();
+    const isValid = inventory?.some((object) => object.objectId === annotationId) ?? false;
+    this.selectionAdapter?.setChatSelection(isValid ? [annotationId] : []);
+  }
+
+  selectAnnotations(annotationIds: readonly string[]): void {
+    if (this.sceneStatus !== "ready") return;
+    const inventory = this.getInventory();
+    if (!inventory) {
+      this.selectionAdapter?.clearChatSelection();
+      return;
+    }
+    const validIds = new Set(inventory.map((object) => object.objectId));
+    const requested = Array.isArray(annotationIds)
+      ? annotationIds.filter((annotationId) => validIds.has(annotationId))
+      : [];
+    this.selectionAdapter?.setChatSelection(requested);
+  }
+
+  clearSelection(): void {
+    this.selectionAdapter?.clearChatSelection();
   }
 
   /** Reconcile displayed hit rows after annotation creation or deletion. */

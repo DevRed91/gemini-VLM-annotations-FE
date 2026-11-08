@@ -1,0 +1,59 @@
+{
+  "environment": {
+    "viewerUrl": "http://127.0.0.1:5204/",
+    "browser": "headless Chromium",
+    "renderer": "SwiftShader",
+    "testedViewports": [
+      [
+        1280,
+        800
+      ],
+      [
+        390,
+        844
+      ]
+    ]
+  },
+  "startedAt": "2026-11-08T16:23:32.105Z",
+  "tests": [
+    {
+      "name": "panel opens and clearly limits search to current annotations",
+      "passed": true
+    },
+    {
+      "name": "partial label search finds Round Marble Table",
+      "passed": true
+    },
+    {
+      "name": "local color/material parsing filters registered annotation attributes",
+      "passed": true
+    },
+    {
+      "name": "plural all query returns every result and one query reports ambiguity",
+      "passed": true
+    },
+    {
+      "name": "no-match and unsupported input return clear local responses",
+      "passed": true
+    },
+    {
+      "name": "clear conversation keeps annotations intact",
+      "passed": true
+    },
+    {
+      "name": "deleting an annotation removes it from visible result rows",
+      "passed": true
+    },
+    {
+      "name": "world reload clears previous conversation and restores persisted annotations",
+      "passed": true
+    },
+    {
+      "name": "panel remains within narrow mobile viewport and closes accessibly",
+      "passed": true
+    }
+  ],
+  "consoleErrors": [],
+  "pageErrors": [],
+  "screenshot": "docs/chat-object-search-phase-2.png"
+}

@@ -1,0 +1,452 @@
+{
+  "environment": {
+    "viewerUrl": "http://127.0.0.1:5205/",
+    "world": "/Apartment.sog",
+    "browser": "headless Chromium",
+    "angle": "SwiftShader",
+    "viewport": [
+      1280,
+      800
+    ],
+    "gaussianHighlighting": "disabled"
+  },
+  "startedAt": "2026-11-08T17:11:17.877Z",
+  "tests": [
+    {
+      "name": "annotated sofa has pin, label, card, and OBB helper",
+      "passed": true,
+      "details": {
+        "id": "annotation-1",
+        "exists": true,
+        "selected": false,
+        "containerSelected": false,
+        "pinBackground": "rgb(4, 31, 236)",
+        "pinBoxShadow": "rgba(0, 0, 0, 0.5) 0px 0px 10px 0px",
+        "pinTransform": "none",
+        "labelBorder": "rgb(0, 0, 0)",
+        "cardExists": true,
+        "hasHelper": true,
+        "helperColor": "ff00ff",
+        "helperBaseColor": "ff00ff"
+      }
+    },
+    {
+      "name": "searching sofa returns a selectable chat result",
+      "passed": true,
+      "details": {
+        "text": "Found 1 matching annotation."
+      }
+    },
+    {
+      "name": "individual chat result selects only annotation-1",
+      "passed": true,
+      "details": {
+        "id": "annotation-1",
+        "exists": true,
+        "selected": true,
+        "containerSelected": true,
+        "pinBackground": "rgb(56, 189, 248)",
+        "pinBoxShadow": "rgba(56, 189, 248, 0.28) 0px 0px 0px 5px, rgba(56, 189, 248, 0.55) 0px 0px 18px 0px",
+        "pinTransform": "matrix(1.3, 0, 0, 1.3, 0, 0)",
+        "labelBorder": "rgb(56, 189, 248)",
+        "cardExists": true,
+        "hasHelper": true,
+        "helperColor": "38bdf8",
+        "helperBaseColor": "ff00ff"
+      }
+    },
+    {
+      "name": "select all emphasizes every matching sofa annotation",
+      "passed": true,
+      "details": [
+        {
+          "id": "annotation-1",
+          "exists": true,
+          "selected": true,
+          "containerSelected": true,
+          "pinBackground": "rgb(56, 189, 248)",
+          "pinBoxShadow": "rgba(56, 189, 248, 0.28) 0px 0px 0px 5px, rgba(56, 189, 248, 0.55) 0px 0px 18px 0px",
+          "pinTransform": "matrix(1.3, 0, 0, 1.3, 0, 0)",
+          "labelBorder": "rgb(56, 189, 248)",
+          "cardExists": true,
+          "hasHelper": true,
+          "helperColor": "38bdf8",
+          "helperBaseColor": "ff00ff"
+        },
+        {
+          "id": "annotation-2",
+          "exists": true,
+          "selected": true,
+          "containerSelected": true,
+          "pinBackground": "rgb(4, 31, 236)",
+          "pinBoxShadow": "rgba(0, 0, 0, 0.5) 0px 0px 10px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "pinTransform": "matrix(1, 0, 0, 1, 0, 0)",
+          "labelBorder": "rgb(0, 0, 0)",
+          "cardExists": true,
+          "hasHelper": true,
+          "helperColor": "38bdf8",
+          "helperBaseColor": "d6ff81"
+        }
+      ]
+    },
+    {
+      "name": "selection updates scale with annotations rather than Gaussian splats",
+      "passed": true,
+      "details": {
+        "repetitions": 1000,
+        "annotationCount": 2,
+        "numSplats": 699086,
+        "durationMs": 0.7000000029802322,
+        "perOperationMs": 0.0007000000029802323
+      }
+    },
+    {
+      "name": "clear selection restores the original annotation visuals",
+      "passed": true,
+      "details": {
+        "before": [
+          {
+            "id": "annotation-1",
+            "exists": true,
+            "selected": false,
+            "containerSelected": false,
+            "pinBackground": "rgb(56, 189, 248)",
+            "pinBoxShadow": "rgba(56, 189, 248, 0.28) 0px 0px 0px 5px, rgba(56, 189, 248, 0.55) 0px 0px 18px 0px",
+            "pinTransform": "matrix(1.3, 0, 0, 1.3, 0, 0)",
+            "labelBorder": "rgb(56, 189, 248)",
+            "cardExists": true,
+            "hasHelper": true,
+            "helperColor": "ff00ff",
+            "helperBaseColor": "ff00ff"
+          },
+          {
+            "id": "annotation-2",
+            "exists": true,
+            "selected": false,
+            "containerSelected": false,
+            "pinBackground": "rgb(4, 31, 236)",
+            "pinBoxShadow": "rgba(0, 0, 0, 0.5) 0px 0px 10px 0px",
+            "pinTransform": "none",
+            "labelBorder": "rgb(0, 0, 0)",
+            "cardExists": true,
+            "hasHelper": true,
+            "helperColor": "d6ff81",
+            "helperBaseColor": "d6ff81"
+          }
+        ],
+        "after": [
+          {
+            "id": "annotation-1",
+            "exists": true,
+            "selected": false,
+            "containerSelected": false,
+            "pinBackground": "rgb(56, 189, 248)",
+            "pinBoxShadow": "rgba(56, 189, 248, 0.28) 0px 0px 0.00036707px 4.99982px, rgba(56, 189, 248, 0.55) 0px 0px 17.9993px 0px",
+            "pinTransform": "matrix(1.29999, 0, 0, 1.29999, 0, 0)",
+            "labelBorder": "rgb(56, 189, 248)",
+            "cardExists": true,
+            "hasHelper": true,
+            "helperColor": "ff00ff",
+            "helperBaseColor": "ff00ff"
+          },
+          {
+            "id": "annotation-2",
+            "exists": true,
+            "selected": false,
+            "containerSelected": false,
+            "pinBackground": "rgb(4, 31, 236)",
+            "pinBoxShadow": "rgba(0, 0, 0, 0.5) 0px 0px 10px 0px",
+            "pinTransform": "none",
+            "labelBorder": "rgb(0, 0, 0)",
+            "cardExists": true,
+            "hasHelper": true,
+            "helperColor": "d6ff81",
+            "helperBaseColor": "d6ff81"
+          }
+        ]
+      }
+    },
+    {
+      "name": "deleting a selected annotation removes its selection",
+      "passed": true,
+      "details": {
+        "deletedId": "annotation-2",
+        "remainingIds": [
+          "annotation-1"
+        ]
+      }
+    },
+    {
+      "name": "clear-all annotations removes every chat selection",
+      "passed": true,
+      "details": {
+        "remainingIds": []
+      }
+    },
+    {
+      "name": "reloading the world clears old selection and visual state",
+      "passed": false,
+      "error": "page.waitForFunction: Timeout 240000ms exceeded.\n    at /Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/viewer-selection-phase3-validate.mjs:292:16\n    at async viewerTest (/Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/viewer-selection-phase3-validate.mjs:103:23)\n    at async file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/viewer-selection-phase3-validate.mjs:290:3"
+    },
+    {
+      "name": "pin-only annotations emphasize without requiring an OBB",
+      "passed": true,
+      "details": {
+        "id": "annotation-4",
+        "exists": true,
+        "selected": true,
+        "containerSelected": true,
+        "pinBackground": "rgb(56, 189, 248)",
+        "pinBoxShadow": "rgba(56, 189, 248, 0.28) 0px 0px 0px 5px, rgba(56, 189, 248, 0.55) 0px 0px 18px 0px",
+        "pinTransform": "matrix(1.3, 0, 0, 1.3, 0, 0)",
+        "labelBorder": "rgb(56, 189, 248)",
+        "cardExists": true,
+        "hasHelper": false,
+        "helperColor": null,
+        "helperBaseColor": null
+      }
+    },
+    {
+      "name": "new searches explicitly clear previous selection",
+      "passed": true,
+      "details": []
+    },
+    {
+      "name": "selection works with Gaussian highlighting disabled",
+      "passed": true,
+      "details": {
+        "mode": "obb-fallback",
+        "gaussianSelections": 0,
+        "shaderErrors": [],
+        "glError": 0,
+        "modifierCount": 0
+      }
+    }
+  ],
+  "expectedTests": [
+    "annotated sofa has pin, label, card, and OBB helper",
+    "searching sofa returns a selectable chat result",
+    "individual chat result selects only annotation-1",
+    "select all emphasizes every matching sofa annotation",
+    "clear selection restores the original annotation visuals",
+    "deleting a selected annotation removes its selection",
+    "clear-all annotations removes every chat selection",
+    "reloading the world clears old selection and visual state",
+    "pin-only annotations emphasize without requiring an OBB",
+    "new searches explicitly clear previous selection",
+    "selection works with Gaussian highlighting disabled",
+    "selection updates scale with annotations rather than Gaussian splats"
+  ],
+  "missingTests": [],
+  "unexpectedTests": [],
+  "duplicateTests": [],
+  "viewer": {
+    "states": {
+      "sofa": {
+        "id": "annotation-1",
+        "exists": true,
+        "selected": false,
+        "containerSelected": false,
+        "pinBackground": "rgb(4, 31, 236)",
+        "pinBoxShadow": "rgba(0, 0, 0, 0.5) 0px 0px 10px 0px",
+        "pinTransform": "none",
+        "labelBorder": "rgb(0, 0, 0)",
+        "cardExists": true,
+        "hasHelper": true,
+        "helperColor": "ff00ff",
+        "helperBaseColor": "ff00ff"
+      },
+      "individual": {
+        "before": {
+          "id": "annotation-1",
+          "exists": true,
+          "selected": false,
+          "containerSelected": false,
+          "pinBackground": "rgb(4, 31, 236)",
+          "pinBoxShadow": "rgba(0, 0, 0, 0.5) 0px 0px 10px 0px",
+          "pinTransform": "none",
+          "labelBorder": "rgb(0, 0, 0)",
+          "cardExists": true,
+          "hasHelper": true,
+          "helperColor": "ff00ff",
+          "helperBaseColor": "ff00ff"
+        },
+        "after": {
+          "id": "annotation-1",
+          "exists": true,
+          "selected": true,
+          "containerSelected": true,
+          "pinBackground": "rgb(56, 189, 248)",
+          "pinBoxShadow": "rgba(56, 189, 248, 0.28) 0px 0px 0px 5px, rgba(56, 189, 248, 0.55) 0px 0px 18px 0px",
+          "pinTransform": "matrix(1.3, 0, 0, 1.3, 0, 0)",
+          "labelBorder": "rgb(56, 189, 248)",
+          "cardExists": true,
+          "hasHelper": true,
+          "helperColor": "38bdf8",
+          "helperBaseColor": "ff00ff"
+        }
+      },
+      "selectAll": [
+        {
+          "id": "annotation-1",
+          "exists": true,
+          "selected": true,
+          "containerSelected": true,
+          "pinBackground": "rgb(56, 189, 248)",
+          "pinBoxShadow": "rgba(56, 189, 248, 0.28) 0px 0px 0px 5px, rgba(56, 189, 248, 0.55) 0px 0px 18px 0px",
+          "pinTransform": "matrix(1.3, 0, 0, 1.3, 0, 0)",
+          "labelBorder": "rgb(56, 189, 248)",
+          "cardExists": true,
+          "hasHelper": true,
+          "helperColor": "38bdf8",
+          "helperBaseColor": "ff00ff"
+        },
+        {
+          "id": "annotation-2",
+          "exists": true,
+          "selected": true,
+          "containerSelected": true,
+          "pinBackground": "rgb(4, 31, 236)",
+          "pinBoxShadow": "rgba(0, 0, 0, 0.5) 0px 0px 10px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+          "pinTransform": "matrix(1, 0, 0, 1, 0, 0)",
+          "labelBorder": "rgb(0, 0, 0)",
+          "cardExists": true,
+          "hasHelper": true,
+          "helperColor": "38bdf8",
+          "helperBaseColor": "d6ff81"
+        }
+      ],
+      "afterClear": [
+        {
+          "id": "annotation-1",
+          "exists": true,
+          "selected": false,
+          "containerSelected": false,
+          "pinBackground": "rgb(56, 189, 248)",
+          "pinBoxShadow": "rgba(56, 189, 248, 0.28) 0px 0px 0.00036707px 4.99982px, rgba(56, 189, 248, 0.55) 0px 0px 17.9993px 0px",
+          "pinTransform": "matrix(1.29999, 0, 0, 1.29999, 0, 0)",
+          "labelBorder": "rgb(56, 189, 248)",
+          "cardExists": true,
+          "hasHelper": true,
+          "helperColor": "ff00ff",
+          "helperBaseColor": "ff00ff"
+        },
+        {
+          "id": "annotation-2",
+          "exists": true,
+          "selected": false,
+          "containerSelected": false,
+          "pinBackground": "rgb(4, 31, 236)",
+          "pinBoxShadow": "rgba(0, 0, 0, 0.5) 0px 0px 10px 0px",
+          "pinTransform": "none",
+          "labelBorder": "rgb(0, 0, 0)",
+          "cardExists": true,
+          "hasHelper": true,
+          "helperColor": "d6ff81",
+          "helperBaseColor": "d6ff81"
+        }
+      ],
+      "afterDelete": {
+        "deletedId": "annotation-2",
+        "remainingIds": [
+          "annotation-1"
+        ]
+      },
+      "afterClearAll": {
+        "remainingIds": []
+      },
+      "pinOnly": {
+        "id": "annotation-4",
+        "exists": true,
+        "selected": true,
+        "containerSelected": true,
+        "pinBackground": "rgb(56, 189, 248)",
+        "pinBoxShadow": "rgba(56, 189, 248, 0.28) 0px 0px 0px 5px, rgba(56, 189, 248, 0.55) 0px 0px 18px 0px",
+        "pinTransform": "matrix(1.3, 0, 0, 1.3, 0, 0)",
+        "labelBorder": "rgb(56, 189, 248)",
+        "cardExists": true,
+        "hasHelper": false,
+        "helperColor": null,
+        "helperBaseColor": null
+      },
+      "afterNewSearch": [],
+      "gaussianDisabled": {
+        "mode": "obb-fallback",
+        "gaussianSelections": 0,
+        "shaderErrors": [],
+        "glError": 0,
+        "modifierCount": 0
+      }
+    },
+    "timings": {
+      "annotated sofa has pin, label, card, and OBB helper": 4863,
+      "searching sofa returns a selectable chat result": 105,
+      "individual chat result selects only annotation-1": 38057,
+      "select all emphasizes every matching sofa annotation": 37251,
+      "selection updates scale with annotations rather than Gaussian splats": 2,
+      "clear selection restores the original annotation visuals": 31162,
+      "deleting a selected annotation removes its selection": 39212,
+      "clear-all annotations removes every chat selection": 8209,
+      "reloading the world clears old selection and visual state": 247956,
+      "pin-only annotations emphasize without requiring an OBB": 17581,
+      "new searches explicitly clear previous selection": 7945,
+      "selection works with Gaussian highlighting disabled": 31138
+    },
+    "performance": {
+      "repetitions": 1000,
+      "annotationCount": 2,
+      "numSplats": 699086,
+      "durationMs": 0.7000000029802322,
+      "perOperationMs": 0.0007000000029802323
+    }
+  },
+  "performance": {
+    "repetitions": 1000,
+    "annotationCount": 2,
+    "numSplats": 699086,
+    "durationMs": 0.7000000029802322,
+    "perOperationMs": 0.0007000000029802323
+  },
+  "shaderErrors": [],
+  "finalGlError": 0,
+  "consoleMessages": [
+    {
+      "type": "debug",
+      "text": "[vite] connecting..."
+    },
+    {
+      "type": "warning",
+      "text": "[.WebGL-0x11c0083b400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "type": "warning",
+      "text": "[.WebGL-0x11c0083b400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "type": "warning",
+      "text": "[.WebGL-0x11c0083b400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "type": "warning",
+      "text": "[.WebGL-0x11c0083b400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+    },
+    {
+      "type": "debug",
+      "text": "[vite] connected."
+    },
+    {
+      "type": "log",
+      "text": "[cluster-debug] sofa {box: Array(4), sampledRayHits: 196, clusterPoints: 150, clusterDims: Object, centroid: Array(3)}"
+    },
+    {
+      "type": "log",
+      "text": "[cluster-debug] sofa {box: Array(4), sampledRayHits: 196, clusterPoints: 114, clusterDims: Object, centroid: Array(3)}"
+    },
+    {
+      "type": "log",
+      "text": "[cluster-debug] sofa {box: Array(4), sampledRayHits: 196, clusterPoints: 150, clusterDims: Object, centroid: Array(3)}"
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": []
+}

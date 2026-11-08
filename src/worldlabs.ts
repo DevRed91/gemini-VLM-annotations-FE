@@ -33,7 +33,7 @@ export interface OperationResponse {
         spz_urls: {
           full?: string;
           full_res?: string;
-          [key: string]: string;
+          [key: string]: string | undefined;
         };
       };
     };

@@ -18,8 +18,19 @@ import { fitOBB, obbWorldToLocal } from "./utils/obbFit";
 import { SpatialObjectRegistry } from "./utils/spatialObjectRegistry";
 import { searchObjects } from "./spatial/ObjectMatcher";
 import type { SearchOptions, SearchQuery } from "./spatial/types";
+import {
+  parseAnnotationMetadata,
+  type AnnotationMetadata,
+} from "./spatial/AnnotationMetadata";
+import {
+  createSceneAnnotationMetadataStore,
+  createSceneAnnotationRecord,
+  type SceneAnnotationMetadataStore,
+  type SceneAnnotationRecord,
+} from "./spatial/AnnotationMetadataStore";
 import { ChatController } from "./chat/ChatController";
 import { ChatPanel } from "./chat/ChatPanel";
+import { ChatAnnotationSelection } from "./viewer/ChatAnnotationSelection";
 import { deriveSearchAttributes } from "./chat/LocalQueryParser";
 import GeometricContextManager from "./GeometricContextManager/GeometricContextManager";
 import { GaussianObjectHighlighter } from "./utils/gaussianObjectHighlighter";
@@ -32,7 +43,7 @@ const API_BASE_URL =
   "/api";
 const BYPASS_TUNNEL_REMINDER =
   (import.meta.env.VITE_BYPASS_TUNNEL_REMINDER as string | undefined) === "true";
-// Experimental Gaussian tinting is opt-in; annotation pins and OBB wireframes stay on.
+// Experimental Gaussian tinting is opt-in; annotation pins stay visible while OBB wireframes are hidden.
 const ENABLE_GAUSSIAN_HIGHLIGHTING =
   (import.meta.env.VITE_ENABLE_GAUSSIAN_HIGHLIGHTING as string | undefined) === "true";
 
@@ -54,6 +65,7 @@ function buildAnnotateEndpoint(baseUrl: string): string {
 interface AnnotationDetection {
   label: string;
   description?: string;
+  metadata?: unknown;
   box: [ymin: number, xmin: number, ymax: number, xmax: number];
 }
 
@@ -72,6 +84,7 @@ interface ViewerAnnotation {
   fallbackTint?: HoverTint;
   selectionOwner?: GaussianObjectHighlighter;
   selectionId?: number;
+  helperBaseColor?: THREE.Color;
   worldGeneration: number;
 }
 
@@ -100,11 +113,15 @@ export class SplatViewer {
    * `docs/chat-object-search-phase-0-registry.md` for the data contract.
    */
   private spatialRegistry: SpatialObjectRegistry | null = null;
+  private annotationMetadataStore: SceneAnnotationMetadataStore | null = null;
   private chatController: ChatController | null = null;
+  private readonly chatAnnotationSelection = new ChatAnnotationSelection();
   private readonly disposedSplats = new WeakSet<SplatMesh>();
   private readonly geometricContext = new GeometricContextManager();
   private apartments: { id: string; obb: OBB; source?: THREE.Object3D; geomSize?: THREE.Vector3 }[] = [];
   private readonly shaderErrors: string[] = [];
+  private static readonly CHAT_SELECTED_COLOR = new THREE.Color(0x38bdf8);
+
   public lastClusterFit: {
     world: OBB;
     local: OBB;
@@ -271,12 +288,19 @@ export class SplatViewer {
     const panel = new ChatPanel(
       (message) => { void this.chatController?.submitQuery(message); },
       () => this.chatController?.clearConversation(),
+      (annotationId) => this.chatController?.selectAnnotation(annotationId),
+      (annotationIds) => this.chatController?.selectAnnotations(annotationIds),
+      () => this.chatController?.clearSelection(),
     );
     this.chatController = new ChatController(
       () => this.spatialRegistry?.list() ?? null,
       (state) => panel.render(state),
       searchObjects,
       () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+      {
+        setChatSelection: (annotationIds) => this.setChatSelection(annotationIds),
+        clearChatSelection: () => this.clearChatSelection(),
+      },
     );
   }
   private updateAnnotationLabels() {
@@ -385,10 +409,22 @@ export class SplatViewer {
     splat.dispose();
   }
 
-  private removeAnnotationVisual(annotation: ViewerAnnotation): void {
+  private removeAnnotationVisual(
+    annotation: ViewerAnnotation,
+    options: { removeMetadata?: boolean } = {},
+  ): void {
+    const removeMetadata = options.removeMetadata ?? true;
+    this.removeChatSelectionId(annotation.apartmentId);
     // Unregister happens here so single deletes, clear-all, and world switches
     // all leave the registry without the removed annotation's spatial object.
     this.spatialRegistry?.remove(annotation.apartmentId);
+    if (removeMetadata) {
+      try {
+        this.annotationMetadataStore?.remove(annotation.apartmentId);
+      } catch (error) {
+        console.error(`[annotation-metadata] Failed to remove ${annotation.apartmentId}:`, error);
+      }
+    }
     this.chatController?.inventoryChanged();
     annotation.element.remove();
     this.apartments = this.apartments.filter((item) => item.id !== annotation.apartmentId);
@@ -405,16 +441,19 @@ export class SplatViewer {
     annotation.fallbackTint = undefined;
   }
 
-  private clearAnnotationVisuals(): void {
-    for (const annotation of this.annotations) this.removeAnnotationVisual(annotation);
+  private clearAnnotationVisuals(options: { removeMetadata?: boolean } = {}): void {
+    for (const annotation of this.annotations) this.removeAnnotationVisual(annotation, options);
     this.annotations = [];
   }
 
   private clearWorldResources(): void {
+    this.clearChatSelection();
     // Annotations unregister (while the registry is still alive) one by one,
-    // then the per-world registry itself is dropped with the world.
-    this.clearAnnotationVisuals();
+    // then the per-world registry itself is dropped with the world. Persisted
+    // records stay scene-keyed so the same scene can be restored on reload.
+    this.clearAnnotationVisuals({ removeMetadata: false });
     this.spatialRegistry = null;
+    this.annotationMetadataStore = null;
     this.objectHighlighter?.dispose();
     this.objectHighlighter = null;
     if (this.currentSplat) this.disposeSplat(this.currentSplat);
@@ -424,10 +463,48 @@ export class SplatViewer {
   }
 
   public async clearAllSelections(): Promise<void> {
+    this.clearChatSelection();
     const owner = this.objectHighlighter;
-    this.clearAnnotationVisuals();
+    this.clearAnnotationVisuals({ removeMetadata: true });
     this.lastClusterFit = null;
     await owner?.clearAll();
+  }
+
+  public setChatSelection(annotationIds: readonly string[]): void {
+    const validIds = new Set(this.annotations.map((annotation) => annotation.apartmentId));
+    this.chatAnnotationSelection.set(annotationIds, validIds);
+    this.updateChatSelectionVisuals();
+  }
+
+  public clearChatSelection(): void {
+    if (!this.chatAnnotationSelection.clear()) return;
+    this.updateChatSelectionVisuals();
+  }
+
+  public getChatSelection(): string[] {
+    return this.chatAnnotationSelection.getSelectedIds();
+  }
+
+  private removeChatSelectionId(annotationId: string): void {
+    if (!this.chatAnnotationSelection.remove(annotationId)) return;
+    this.updateChatSelectionVisuals();
+  }
+
+  private updateChatSelectionVisuals(): void {
+    for (const annotation of this.annotations) {
+      const selected = this.chatAnnotationSelection.has(annotation.apartmentId);
+      annotation.element.classList.toggle("annotation-container--chat-selected", selected);
+      if (!annotation.helper) continue;
+
+      if (!annotation.helperBaseColor) {
+        const material = annotation.helper.material as THREE.LineBasicMaterial;
+        annotation.helperBaseColor = material.color.clone();
+      }
+      const material = annotation.helper.material as THREE.LineBasicMaterial;
+      material.color.copy(selected
+        ? SplatViewer.CHAT_SELECTED_COLOR
+        : annotation.helperBaseColor);
+    }
   }
 
   public async removeAnnotation(annotation: ViewerAnnotation): Promise<void> {
@@ -468,9 +545,19 @@ export class SplatViewer {
       }
 
       this.objectHighlighter = highlighter;
-      // Fresh scene inventory per world (annotation IDs never reset, so the
-      // generated `annotation-N` IDs cannot collide across worlds either).
+      // Fresh scene inventory per world. Semantic metadata is loaded from the
+      // scene-keyed JSON store after the world is ready, so another world can
+      // never leak into this registry.
       this.spatialRegistry = new SpatialObjectRegistry();
+      this.annotationMetadataStore = this.createAnnotationMetadataStore(url);
+      const storedAnnotations = this.loadStoredAnnotations();
+      // Persisted IDs seed the monotonic sequence; a page/session reload can
+      // therefore never reuse an existing annotation ID for this scene.
+      this.annotationSequence = Math.max(
+        this.annotationSequence,
+        this.annotationMetadataStore?.maxAnnotationSequence() ?? 0,
+      );
+      for (const record of storedAnnotations) this.restoreStoredAnnotation(record);
       this.splatLoaded = true;
       this.chatController?.setSceneStatus("ready");
       return true;
@@ -525,12 +612,15 @@ export class SplatViewer {
     position: THREE.Vector3,
     label: string,
     options: {
+      annotationId?: string;
       description?: string;
+      metadata?: AnnotationMetadata;
       dimensions?: DimensionSet;
       worldObb?: OBB;
       localObb?: OBB;
       selectionOwner?: GaussianObjectHighlighter;
       selectionId?: number;
+      persistMetadata?: boolean;
     } = {},
   ): ViewerAnnotation {
     const container = document.createElement("div");
@@ -576,10 +666,22 @@ export class SplatViewer {
     labelButton.onclick = toggleCard;
     container.append(pin, labelButton, card);
 
+    const requestedAnnotationId = options.annotationId?.trim();
+    if (requestedAnnotationId && !/^annotation-\d+$/.test(requestedAnnotationId)) {
+      throw new TypeError(`Invalid persisted annotation ID: ${requestedAnnotationId}`);
+    }
+    if (requestedAnnotationId) {
+      const sequence = Number(/annotation-(\d+)$/.exec(requestedAnnotationId)?.[1]);
+      if (Number.isFinite(sequence)) {
+        this.annotationSequence = Math.max(this.annotationSequence, sequence);
+      }
+    } else {
+      this.annotationSequence += 1;
+    }
     const annotation: ViewerAnnotation = {
       element: container,
       position: position.clone(),
-      apartmentId: `annotation-${++this.annotationSequence}`,
+      apartmentId: requestedAnnotationId ?? `annotation-${this.annotationSequence}`,
       selectionOwner: options.selectionOwner,
       selectionId: options.selectionId,
       worldGeneration: this.worldGeneration,
@@ -603,14 +705,16 @@ export class SplatViewer {
         );
         const edges = new THREE.EdgesGeometry(box);
         box.dispose();
-        const helper = new THREE.LineSegments(
-          edges,
-          new THREE.LineBasicMaterial({ color: new THREE.Color().setRGB(...color) }),
-        );
+        const helperMaterial = new THREE.LineBasicMaterial({
+          color: new THREE.Color().setRGB(...color),
+        });
+        const helper = new THREE.LineSegments(edges, helperMaterial);
         helper.position.copy(options.localObb.position);
         helper.quaternion.copy(options.localObb.quaternion);
+        helper.visible = false;
         this.currentSplat.add(helper);
         annotation.helper = helper;
+        annotation.helperBaseColor = helperMaterial.color.clone();
 
         if (ENABLE_GAUSSIAN_HIGHLIGHTING && !options.selectionOwner) {
           const fallback = new HoverTint(this.currentSplat, {
@@ -627,11 +731,16 @@ export class SplatViewer {
 
     document.body.appendChild(container);
     this.annotations.push(annotation);
+    const effectiveDescription = options.description ?? options.metadata?.description;
     this.registerAnnotation(annotation, {
       label,
-      description: options.description,
+      description: effectiveDescription,
+      metadata: options.metadata,
       clusterObb: Boolean(annotation.worldObb),
     });
+    if (options.persistMetadata !== false) {
+      this.persistAnnotationMetadata(annotation, label, effectiveDescription, options.metadata, options.dimensions);
+    }
     this.chatController?.inventoryChanged();
     return annotation;
   }
@@ -651,16 +760,23 @@ export class SplatViewer {
    */
   private registerAnnotation(
     annotation: ViewerAnnotation,
-    details: { label: string; description?: string; clusterObb: boolean },
+    details: {
+      label: string;
+      description?: string;
+      metadata?: AnnotationMetadata;
+      clusterObb: boolean;
+    },
   ): void {
     if (!this.spatialRegistry) return;
     try {
       this.spatialRegistry.register({
         objectId: annotation.apartmentId,
         semanticLabel: details.label,
+        metadata: details.metadata,
         attributes: {
           ...deriveSearchAttributes(details.label, details.description),
           ...(details.description ? { description: details.description } : {}),
+          ...details.metadata?.attributes,
           obb: details.clusterObb ? "cluster" : "point",
         },
         // The registry stores defensive clones; `!` is safe: a cluster-fitted
@@ -674,6 +790,81 @@ export class SplatViewer {
       });
     } catch (error) {
       console.error(`[registry] Failed to register ${annotation.apartmentId}:`, error);
+    }
+  }
+
+  private createAnnotationMetadataStore(url: string): SceneAnnotationMetadataStore | null {
+    try {
+      return createSceneAnnotationMetadataStore(url);
+    } catch (error) {
+      console.error("[annotation-metadata] Persistent metadata storage is unavailable:", error);
+      return null;
+    }
+  }
+
+  private loadStoredAnnotations(): SceneAnnotationRecord[] {
+    if (!this.annotationMetadataStore) return [];
+    try {
+      return this.annotationMetadataStore.list();
+    } catch (error) {
+      console.error("[annotation-metadata] Failed to load scene annotations:", error);
+      return [];
+    }
+  }
+
+  private restoreStoredAnnotation(record: SceneAnnotationRecord): void {
+    try {
+      const position = new THREE.Vector3(record.position.x, record.position.y, record.position.z);
+      const storedObb = record.geometry.kind === "cluster" ? record.geometry.obb : undefined;
+      const worldObb = storedObb
+        ? new OBB({
+            position: new THREE.Vector3(storedObb.position.x, storedObb.position.y, storedObb.position.z),
+            quaternion: new THREE.Quaternion(
+              storedObb.quaternion.x,
+              storedObb.quaternion.y,
+              storedObb.quaternion.z,
+              storedObb.quaternion.w,
+            ),
+            size: new THREE.Vector3(storedObb.size.x, storedObb.size.y, storedObb.size.z),
+          })
+        : undefined;
+      const localObb = worldObb && this.currentSplat
+        ? obbWorldToLocal(worldObb, this.currentSplat)
+        : undefined;
+      this.createAnnotationElement(position, record.label, {
+        annotationId: record.annotationId,
+        description: record.description,
+        metadata: record.metadata,
+        dimensions: record.dimensions,
+        worldObb,
+        localObb,
+        persistMetadata: false,
+      });
+    } catch (error) {
+      console.error(`[annotation-metadata] Failed to restore ${record.annotationId}:`, error);
+    }
+  }
+
+  private persistAnnotationMetadata(
+    annotation: ViewerAnnotation,
+    label: string,
+    description: string | undefined,
+    metadata: AnnotationMetadata | undefined,
+    annotationDimensions: DimensionSet | undefined,
+  ): void {
+    if (!this.annotationMetadataStore) return;
+    try {
+      this.annotationMetadataStore.save(createSceneAnnotationRecord({
+        annotationId: annotation.apartmentId,
+        label,
+        description,
+        metadata,
+        position: annotation.position,
+        worldObb: annotation.worldObb,
+        dimensions: annotationDimensions,
+      }));
+    } catch (error) {
+      console.error(`[annotation-metadata] Failed to save ${annotation.apartmentId}:`, error);
     }
   }
 
@@ -724,6 +915,8 @@ export class SplatViewer {
       return null;
     }
 
+    const metadata = parseAnnotationMetadata(detection.metadata);
+    const semanticDescription = detection.description ?? metadata?.description;
     const sampledPoints = this.samplePointsFromBox(box);
     const measured = this.geometricContext.registerAndMeasureObject(
       detection.label,
@@ -769,7 +962,8 @@ export class SplatViewer {
           measured.centroid,
           measured.label,
           {
-            description: detection.description,
+            description: semanticDescription,
+            metadata,
             dimensions: measured.dimensions,
             worldObb: fit.obb,
             localObb: local,
@@ -797,7 +991,8 @@ export class SplatViewer {
       return null;
     }
     return this.createAnnotationElement(fallbackPosition, detection.label, {
-      description: detection.description,
+      description: semanticDescription,
+      metadata,
     });
   }
 
@@ -922,6 +1117,7 @@ if (import.meta.env.DEV) {
       return registry ? { size: registry.size, objects: registry.list() } : null;
     },
     get spatialRegistry() { return (viewer as any).spatialRegistry; },
+    get chatSelection() { return viewer.getChatSelection(); },
     /**
      * Phase 1 local object search (DEV-only seam): runs the deterministic
      * label/attribute matcher (src/spatial/ObjectMatcher.ts) over the current
@@ -941,8 +1137,12 @@ if (import.meta.env.DEV) {
       v.renderer.render(v.scene, v.camera);
       return v.renderer.domElement.toDataURL("image/png");
     },
-    async inject(label: string, box: [number, number, number, number]) {
-      await (viewer as any).annotateFromDetection({ label, description: "test", box }, null);
+    async inject(
+      label: string,
+      box: [number, number, number, number],
+      metadata?: unknown,
+    ) {
+      await (viewer as any).annotateFromDetection({ label, description: "test", box, metadata }, null);
       return viewer.lastClusterFit;
     },
     async clearAll() { await viewer.clearAllSelections(); },

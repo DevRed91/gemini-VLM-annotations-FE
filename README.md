@@ -204,6 +204,10 @@ When highlighting is enabled, a fitted world-space OBB is passed directly to `li
 
 This remains centre/OBB membership, not semantic segmentation; background Gaussians inside a fitted box may be included.
 
+### Object-search track — Phase 3 viewer selection
+
+The Spatial Search panel can now drive annotation emphasis in the real viewer. Each result exposes **Select in scene**, result groups expose **Select all in scene** and **Clear selection**, and the viewer exposes `setChatSelection()`, `clearChatSelection()`, and `getChatSelection()` using canonical `annotation-N` IDs. Emphasis reuses annotation pins, labels, cards, and OBB wireframes; it does not refit geometry, traverse Gaussians, or enable Gaussian highlighting. New searches and world reloads explicitly clear the previous selection. Details: `docs/chat-object-search-phase-3-viewer-selection.md`, results: `docs/chat-object-search-phase-3-viewer-selection-results.json`.
+
 ### Object-search track — Phase 0 registry integration
 
 Phase 0 of the chat object-search plan (`docs/chat-object-search-investigation.md`) is implemented: every viewer annotation registers into a per-world `SpatialObjectRegistry` as a spatial object keyed by its canonical `annotation-N` ID, removals unregister, and a world reload installs a fresh registry. Labels, VLM descriptions, and world OBBs are queryable in-memory; pin-only fallbacks register a zero-size point OBB tagged `obb: "point"`. Details: `docs/chat-object-search-phase-0-registry.md`, results: `docs/chat-object-search-phase-0-results.json`.
@@ -223,11 +227,14 @@ Run the regression and integration suites:
 npm run validate:phase2
 npm run validate:phase3
 npm run validate:registry
+npm run validate:search
+npm run validate:chat
+npm run validate:viewer-selection
 ```
 
-Phase 3 defaults to 20 real-scene selection samples and writes `docs/phase3-results.json`. For a shorter development check, `PHASE3_REPETITIONS=2 npm run validate:phase3` reduces only the timing sample count; it is not the acceptance run.
+The Gaussian multi-object Phase 3 validator defaults to 20 real-scene selection samples and writes `docs/phase3-results.json`. For a shorter development check, `PHASE3_REPETITIONS=2 npm run validate:phase3` reduces only the timing sample count; it is not the acceptance run.
 
-Both validators start their own Vite server. `PHASE2_URL` or `PHASE3_URL` can target an existing server, `CHROME_EXE` selects a Chromium executable, and `PLAYWRIGHT_MODULE` supports an external Playwright installation. The DEV-only `window.__sl.inject(label, box)` hook injects deterministic detections without contacting Gemini.
+These validators start their own Vite server. Existing-server overrides include `PHASE2_URL`, `PHASE3_URL`, `REGISTRY_URL`, `SEARCH_URL`, `CHAT_URL`, and `VIEWER_SELECTION_URL`; `CHROME_EXE` selects a Chromium executable, and `PLAYWRIGHT_MODULE` supports an external Playwright installation. The DEV-only `window.__sl.inject(label, box)` hook injects deterministic detections without contacting Gemini.
 
 For a manual smoke test, run `npm run dev`, create two annotations, check hover over each, close one annotation, reload the world, and repeat with `/Apartment-lod.rad` to exercise the OBB fallback.
 
@@ -238,4 +245,4 @@ npm run build
 npx tsc --noEmit --incremental false
 ```
 
-The no-emit check retains pre-existing diagnostics in `src/experiment/gaussianIdProbe.ts`, `src/utils/utils.ts`, and `src/worldlabs.ts`; Phase 3 files are expected to add none.
+The no-emit TypeScript check currently passes with zero diagnostics.

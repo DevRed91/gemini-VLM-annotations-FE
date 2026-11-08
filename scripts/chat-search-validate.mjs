@@ -171,9 +171,9 @@ try {
     assert.equal(await history.getByText(sofa2.id, { exact: true }).count(), 1);
   });
 
-  await check("world reload clears previous scene results", async () => {
+  await check("world reload clears previous conversation and restores persisted annotations", async () => {
     await page.evaluate(() => window.__sl.load("/Apartment.sog"));
-    await page.waitForFunction(() => window.__sl.ready && window.__sl.registry?.size === 0, null, { timeout: 240000 });
+    await page.waitForFunction(() => window.__sl.ready && window.__sl.registry?.size === 2, null, { timeout: 240000 });
     await history.getByText(/scene ready/i).waitFor();
     assert.equal(await history.getByText(table.id, { exact: true }).count(), 0);
     assert.equal(await history.getByText(sofa2.id, { exact: true }).count(), 0);

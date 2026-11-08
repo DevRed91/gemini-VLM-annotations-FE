@@ -82,4 +82,49 @@ describe("ChatController", () => {
     await h.controller.submitQuery("chair");
     assert.match(h.state.messages.at(-1)!.text, /unavailable/i);
   });
+
+  test("individual selection calls the viewer API with the correct valid ID", () => {
+    const calls: { type: "set" | "clear"; ids?: string[] }[] = [];
+    const controller = new ChatController(() => inventory, () => undefined, undefined, undefined, {
+      setChatSelection: (ids) => calls.push({ type: "set", ids: [...ids] }),
+      clearChatSelection: () => calls.push({ type: "clear" }),
+    });
+    controller.setSceneStatus("ready");
+    controller.selectAnnotation("annotation-3");
+    assert.deepEqual(calls, [{ type: "clear" }, { type: "set", ids: ["annotation-3"] }]);
+  });
+
+  test("bulk selection passes every valid result ID and ignores stale IDs", () => {
+    let currentInventory: readonly SearchableObject[] = inventory;
+    const calls: string[][] = [];
+    const controller = new ChatController(() => currentInventory, () => undefined, undefined, undefined, {
+      setChatSelection: (ids) => calls.push([...ids]),
+      clearChatSelection: () => calls.push([]),
+    });
+    controller.setSceneStatus("ready");
+    controller.selectAnnotations(["annotation-3", "annotation-2", "missing"]);
+    assert.deepEqual(calls, [[], ["annotation-3", "annotation-2"]]);
+
+    currentInventory = [inventory[0]!, inventory[1]!];
+    controller.selectAnnotations(["annotation-1", "annotation-3"]);
+    assert.deepEqual(calls.at(-1), ["annotation-1"]);
+  });
+
+  test("clear selection and new searches reset the viewer selection", async () => {
+    const calls: { type: "set" | "clear"; ids?: string[] }[] = [];
+    const controller = new ChatController(() => inventory, () => undefined, undefined, undefined, {
+      setChatSelection: (ids) => calls.push({ type: "set", ids: [...ids] }),
+      clearChatSelection: () => calls.push({ type: "clear" }),
+    });
+    controller.setSceneStatus("ready");
+    controller.selectAnnotation("annotation-1");
+    controller.clearSelection();
+    await controller.submitQuery("sofas");
+    assert.deepEqual(calls, [
+      { type: "clear" },
+      { type: "set", ids: ["annotation-1"] },
+      { type: "clear" },
+      { type: "clear" },
+    ]);
+  });
 });

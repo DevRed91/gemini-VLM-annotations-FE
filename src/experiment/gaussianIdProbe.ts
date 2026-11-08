@@ -19,7 +19,7 @@ export class GaussianIdProbe {
   private dbgMax = dyno.dynoVec3(new THREE.Vector3());
   private selected: number[] = [];
 
-  constructor(private splat: SplatMesh, private numSplats: number) {
+  constructor(private splat: SplatMesh, numSplats: number) {
     this.rows = Math.ceil(numSplats / W);
     this.data = new Uint8Array(W * this.rows);
     this.tex = new THREE.DataTexture(this.data, W, this.rows, THREE.RedIntegerFormat, THREE.UnsignedByteType);

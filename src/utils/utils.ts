@@ -1,8 +1,5 @@
 import { dyno, SplatMesh } from "@sparkjsdev/spark";
 
-const effectParams = {
-  effect: "Magic",
-};
 const animateT = dyno.dynoFloat(0);
 
 export const setupSplatModifier = (splatMesh: SplatMesh) => {

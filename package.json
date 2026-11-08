@@ -8,7 +8,9 @@
     "validate:registry": "node scripts/registry-validate.mjs",
     "validate:search": "node scripts/spatial-search-validate.mjs",
     "validate:chat": "node scripts/chat-search-validate.mjs",
-    "test": "node --test tests/"
+    "test": "node --test tests/",
+    "validate:viewer-selection": "node scripts/viewer-selection-phase3-validate.mjs",
+    "validate:annotation-metadata": "node scripts/annotation-metadata-phase4-validate.mjs"
   },
   "dependencies": {
     "@sparkjsdev/spark": "^2.0.0",
