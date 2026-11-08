@@ -48,6 +48,8 @@ export interface SearchableObject {
   readonly objectId: string;
   readonly semanticLabel: string;
   readonly attributes: Readonly<Record<string, string | number | boolean | null>>;
+  /** Structured annotation-time metadata. Optional for legacy/fallback annotations. */
+  readonly metadata?: import("./AnnotationMetadata.ts").AnnotationMetadata;
 }
 
 /**

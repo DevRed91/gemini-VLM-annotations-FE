@@ -1,0 +1,109 @@
+{
+  "environment": {
+    "viewerUrl": "http://127.0.0.1:5206/",
+    "scene": "/Apartment.sog",
+    "browser": "headless Chromium",
+    "renderer": "SwiftShader",
+    "annotationEndpoint": "mocked"
+  },
+  "startedAt": "2026-11-08T16:15:17.847Z",
+  "annotationRequests": [
+    {
+      "url": "http://127.0.0.1:5206/api/annotate",
+      "time": "2026-11-08T16:13:43.557Z"
+    }
+  ],
+  "tests": [
+    {
+      "name": "mocked Gemini annotation workflow creates one structured annotation",
+      "passed": true,
+      "details": {
+        "annotationCount": 1,
+        "annotationId": "annotation-1",
+        "label": "Dining Table",
+        "attributes": {
+          "color": "white",
+          "material": "marble",
+          "shape": "round",
+          "description": "A round dining table with a white marble top.",
+          "usage": "dining",
+          "obb": "cluster"
+        },
+        "metadata": {
+          "schemaVersion": 1,
+          "category": "table",
+          "description": "A round dining table with a white marble top.",
+          "attributes": {
+            "shape": "round",
+            "material": "marble",
+            "color": "white",
+            "usage": "dining"
+          },
+          "synonyms": [
+            "round table",
+            "marble dining table"
+          ],
+          "provenance": {
+            "source": "gemini",
+            "confidence": 0.9
+          }
+        }
+      }
+    },
+    {
+      "name": "structured metadata is saved as scene JSON",
+      "passed": true,
+      "details": {
+        "storageKey": "gemini-annotation-metadata:v1:http%3A%2F%2Flocal.scene%2FApartment.sog",
+        "annotationCount": 1
+      }
+    },
+    {
+      "name": "Table and stored-attribute searches are local and selectable",
+      "passed": true,
+      "details": {
+        "annotationRequestsDuringSearch": 0
+      }
+    },
+    {
+      "name": "scene reload restores annotation metadata without another Gemini request",
+      "passed": true,
+      "details": {
+        "annotationId": "annotation-1",
+        "metadata": {
+          "schemaVersion": 1,
+          "category": "table",
+          "description": "A round dining table with a white marble top.",
+          "attributes": {
+            "shape": "round",
+            "material": "marble",
+            "color": "white",
+            "usage": "dining"
+          },
+          "synonyms": [
+            "round table",
+            "marble dining table"
+          ],
+          "provenance": {
+            "source": "gemini",
+            "confidence": 0.9
+          }
+        },
+        "annotationCount": 1
+      }
+    },
+    {
+      "name": "browser reload restores metadata and search makes zero annotation requests",
+      "passed": true,
+      "details": {
+        "annotationRequestsDuringSearch": 0
+      }
+    },
+    {
+      "name": "deleting the restored annotation removes its persisted metadata",
+      "passed": true
+    }
+  ],
+  "consoleErrors": [],
+  "pageErrors": []
+}

@@ -14,6 +14,8 @@ const ATTRIBUTE_WORDS: Readonly<Record<string, readonly [string, string]>> = {
   marble: ["material", "marble"], brass: ["material", "brass"], metal: ["material", "metal"],
   metallic: ["material", "metal"], glass: ["material", "glass"], leather: ["material", "leather"],
   fabric: ["material", "fabric"], plastic: ["material", "plastic"], ceramic: ["material", "ceramic"],
+  round: ["shape", "round"], circular: ["shape", "round"], rectangular: ["shape", "rectangular"],
+  square: ["shape", "square"], oval: ["shape", "oval"], spherical: ["shape", "spherical"],
 };
 
 const COMMAND_PREFIXES = ["look for ", "search for ", "where is ", "find ", "search ", "show ", "locate "];
@@ -110,6 +112,10 @@ const SEARCH_ATTRIBUTE_WORDS: Readonly<Record<string, Readonly<Record<string, st
     wood: "wood", wooden: "wood", marble: "marble", brass: "brass", metal: "metal",
     metallic: "metal", glass: "glass", leather: "leather", fabric: "fabric",
     plastic: "plastic", ceramic: "ceramic",
+  },
+  shape: {
+    round: "round", circular: "round", rectangular: "rectangular",
+    square: "square", oval: "oval", spherical: "spherical",
   },
 };
 

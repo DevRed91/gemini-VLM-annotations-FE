@@ -1,4 +1,5 @@
 import { cloneObb, OBB } from "./obb.ts";
+import { copyAnnotationMetadata, type AnnotationMetadata } from "../spatial/AnnotationMetadata.ts";
 
 export type SpatialObjectId = string;
 export type SpatialObjectAttributeValue = string | number | boolean | null;
@@ -11,6 +12,8 @@ export interface SpatialObjectInput {
   readonly objectId?: SpatialObjectId;
   readonly semanticLabel: string;
   readonly attributes?: SpatialObjectAttributes;
+  /** Structured semantic metadata; optional for legacy/fallback annotations. */
+  readonly metadata?: AnnotationMetadata;
   /** World-space bounds; stored as a defensive clone. */
   readonly worldObb: OBB;
 }
@@ -19,12 +22,14 @@ export interface SpatialObjectPatch {
   readonly semanticLabel?: string;
   /** Replaces the complete attribute map rather than shallow-merging it. */
   readonly attributes?: SpatialObjectAttributes;
+  readonly metadata?: AnnotationMetadata;
   readonly worldObb?: OBB;
 }
 
 export interface SpatialObjectSnapshot {
   readonly objectId: SpatialObjectId;
   readonly semanticLabel: string;
+  readonly metadata?: AnnotationMetadata;
   readonly attributes: SpatialObjectAttributes;
   /** A defensive clone; mutating it does not mutate the registry. */
   readonly worldObb: OBB;
@@ -32,6 +37,7 @@ export interface SpatialObjectSnapshot {
 
 interface StoredSpatialObject {
   readonly semanticLabel: string;
+  readonly metadata?: AnnotationMetadata;
   readonly attributes: SpatialObjectAttributes;
   readonly worldObb: OBB;
 }
@@ -83,10 +89,11 @@ export class SpatialObjectRegistry {
     const objectId = this.allocateId(input.objectId);
     const semanticLabel = copyLabel(input.semanticLabel);
     const attributes = copyAttributes(input.attributes);
+    const metadata = copyAnnotationMetadata(input.metadata);
     const worldObb = cloneObb(input.worldObb, "worldObb");
 
     this.usedIds.add(objectId);
-    this.records.set(objectId, { semanticLabel, attributes, worldObb });
+    this.records.set(objectId, { semanticLabel, metadata, attributes, worldObb });
     return this.snapshot(objectId, this.records.get(objectId)!);
   }
 
@@ -99,6 +106,7 @@ export class SpatialObjectRegistry {
     if (
       !patch ||
       (patch.semanticLabel === undefined &&
+        patch.metadata === undefined &&
         patch.attributes === undefined &&
         patch.worldObb === undefined)
     ) {
@@ -110,6 +118,9 @@ export class SpatialObjectRegistry {
         patch.semanticLabel === undefined
           ? current.semanticLabel
           : copyLabel(patch.semanticLabel),
+      metadata: patch.metadata === undefined
+        ? current.metadata
+        : copyAnnotationMetadata(patch.metadata),
       attributes:
         patch.attributes === undefined
           ? current.attributes
@@ -173,6 +184,7 @@ export class SpatialObjectRegistry {
     return Object.freeze({
       objectId,
       semanticLabel: record.semanticLabel,
+      metadata: record.metadata,
       attributes: record.attributes,
       worldObb: cloneObb(record.worldObb),
     });

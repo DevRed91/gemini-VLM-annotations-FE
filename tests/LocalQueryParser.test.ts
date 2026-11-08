@@ -42,6 +42,7 @@ describe("annotation search attribute derivation", () => {
     assert.deepEqual(deriveSearchAttributes("Round Marble Table", "A white stone table"), {
       material: "marble",
       color: "white",
+      shape: "round",
     });
     assert.deepEqual(deriveSearchAttributes("Wooden Dining Table"), { material: "wood" });
   });

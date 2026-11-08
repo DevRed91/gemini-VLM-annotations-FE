@@ -1,9 +1,13 @@
 /**
- * Phase 1 local object search — deterministic label/attribute matching over a
- * per-world annotation inventory (`SpatialObjectRegistry.list()` output or
- * any `SearchableObject[]`).
+ * Local object search — deterministic semantic matching over a per-world
+ * annotation inventory (`SpatialObjectRegistry.list()` output or any
+ * `SearchableObject[]`).
  *
- * Design boundaries (Phase 1 spec):
+ * Search reads only annotation-time data already present in the inventory:
+ * display label, structured category/description/attributes/synonyms, and
+ * legacy flat attributes. It never calls Gemini or any annotation API.
+ *
+ * Design boundaries:
  * - Exact or whole-word-phrase matching after normalization: no fuzzy matching, embeddings,
  *   vector databases, or semantic search, and no Gemini/API calls.
  * - Read-only: the matcher never mutates the inventory, the registry, or any
@@ -167,6 +171,36 @@ function buildSynonymLookup(options?: SearchOptions): ReadonlyMap<string, string
  * string queries work against the registry's numeric/boolean values. A null
  * stored value or one that normalizes to "" never matches.
  */
+/** Structured metadata attributes override legacy derived attributes on conflict. */
+function effectiveAttributes(
+  object: SearchableObject,
+): Readonly<Record<string, unknown>> {
+  const legacy = object.attributes && typeof object.attributes === "object"
+    ? (object.attributes as Readonly<Record<string, unknown>>)
+    : {};
+  const metadataAttributes = object.metadata?.attributes;
+  return metadataAttributes && typeof metadataAttributes === "object"
+    ? { ...legacy, ...metadataAttributes }
+    : legacy;
+}
+
+/**
+ * Label-like fields matched as complete normalized phrases: display label,
+ * metadata category, metadata description, and metadata synonyms. This never
+ * performs substring/partial-word matching.
+ */
+function semanticLabelCandidates(object: SearchableObject): string[] {
+  const metadata = object.metadata;
+  if (!metadata || typeof metadata !== "object") return [object.semanticLabel];
+  const candidates = [
+    object.semanticLabel,
+    metadata.category,
+    metadata.description,
+    ...(Array.isArray(metadata.synonyms) ? metadata.synonyms : []),
+  ];
+  return candidates.filter((value): value is string => typeof value === "string");
+}
+
 function attributeMatches(
   attributes: Readonly<Record<string, unknown>>,
   key: string,
@@ -227,15 +261,14 @@ export function searchObjects(
     if (!object || typeof object !== "object") continue;
     if (typeof object.objectId !== "string" || object.objectId.trim() === "") continue;
 
-    const attributes: Readonly<Record<string, unknown>> =
-      object.attributes && typeof object.attributes === "object"
-        ? (object.attributes as Readonly<Record<string, unknown>>)
-        : {};
+    const attributes = effectiveAttributes(object);
 
     if (wantedLabel !== null) {
-      // Registry labels fold through the same dictionary as queries.
-      const registered = foldSynonyms(normalizeLabel(object.semanticLabel), lookup);
-      if (!labelMatches(registered, wantedLabel)) continue;
+      // Every semantic field folds through the same dictionary as queries.
+      const labelMatched = semanticLabelCandidates(object).some((candidate) =>
+        labelMatches(foldSynonyms(normalizeLabel(candidate), lookup), wantedLabel),
+      );
+      if (!labelMatched) continue;
     }
 
     let qualifies = true;
