@@ -15,7 +15,9 @@ import {
 } from "./utils/mobileJoystick";
 import { HoverTint, OBB, pickNearestOBB } from "./utils/hoverTint";
 import { fitOBB, obbWorldToLocal } from "./utils/obbFit";
-import GeometricContextManager from "./GeometricContextManager/GeometricContextManager";
+import GeometricContextManager, {
+  filterDepthOutliers,
+} from "./GeometricContextManager/GeometricContextManager";
 import { GaussianObjectHighlighter } from "./utils/gaussianObjectHighlighter";
 import { defaultGaussianMaskColor } from "./utils/gaussianMaskManager";
 import { isNonLodSplat } from "./utils/gaussianIndexSupport";
@@ -687,14 +689,17 @@ export class SplatViewer {
       return null;
     }
 
-    const sampledPoints = this.samplePointsFromBox(box);
+    const sampledPoints = filterDepthOutliers(
+      this.samplePointsFromBox(box),
+      this.camera.getWorldPosition(new THREE.Vector3()),
+    );
     const measured = this.geometricContext.registerAndMeasureObject(
       detection.label,
       sampledPoints,
-      { eps: 0.3, minPts: isNonLodSplat(splat) ? 10 : 4 },
+      { minPts: isNonLodSplat(splat) ? 10 : 4 }, // eps is adaptive to sample spacing
     );
     if (measured) {
-      const fit = fitOBB(measured.points);
+      const fit = fitOBB(measured.points, { mode: "upright", dominantLayer: true });
       if (fit) {
         // Only the fallback/helper use world-to-local conversion; lifting stays world-space.
         const local = obbWorldToLocal(fit.obb, splat);
