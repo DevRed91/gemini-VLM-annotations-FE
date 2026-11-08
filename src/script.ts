@@ -116,6 +116,7 @@ export class SplatViewer {
   private annotationMetadataStore: SceneAnnotationMetadataStore | null = null;
   private chatController: ChatController | null = null;
   private readonly chatAnnotationSelection = new ChatAnnotationSelection();
+  private cameraOrientTarget: THREE.Quaternion | null = null;
   private readonly disposedSplats = new WeakSet<SplatMesh>();
   private readonly geometricContext = new GeometricContextManager();
   private apartments: { id: string; obb: OBB; source?: THREE.Object3D; geomSize?: THREE.Vector3 }[] = [];
@@ -227,6 +228,7 @@ export class SplatViewer {
     let lastTime = performance.now();
     this.renderer.setAnimationLoop((time) => {
       this.controls.update(this.cameraRig);
+      this.stepCameraOrient();
       this.camera.updateMatrixWorld();
       // this.lockCameraHeightToGround();
       const MOVE_SPEED = 2.0;
@@ -288,7 +290,10 @@ export class SplatViewer {
     const panel = new ChatPanel(
       (message) => { void this.chatController?.submitQuery(message); },
       () => this.chatController?.clearConversation(),
-      (annotationId) => this.chatController?.selectAnnotation(annotationId),
+      (annotationId) => {
+        this.chatController?.selectAnnotation(annotationId);
+        this.orientCameraToAnnotation(annotationId);
+      },
       (annotationIds) => this.chatController?.selectAnnotations(annotationIds),
       () => this.chatController?.clearSelection(),
     );
@@ -474,6 +479,34 @@ export class SplatViewer {
     const validIds = new Set(this.annotations.map((annotation) => annotation.apartmentId));
     this.chatAnnotationSelection.set(annotationIds, validIds);
     this.updateChatSelectionVisuals();
+  }
+
+  /** Smoothly turns the camera (in place) to face an annotation's tag. */
+  public orientCameraToAnnotation(annotationId: string): void {
+    const annotation = this.annotations.find((a) => a.apartmentId === annotationId);
+    if (!annotation) return;
+    this.cameraRig.updateMatrixWorld(true);
+    const eye = new THREE.Vector3();
+    this.camera.getWorldPosition(eye);
+    const dir = annotation.position.clone().sub(eye);
+    const horizontal = Math.hypot(dir.x, dir.z);
+    if (dir.lengthSq() < 1e-8) return;
+    const yaw = Math.atan2(-dir.x, -dir.z);
+    const pitch = Math.atan2(dir.y, horizontal);
+    // SparkControls stores yaw+pitch on the rig quaternion (YXZ order).
+    this.cameraOrientTarget = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(pitch, yaw, 0, "YXZ"),
+    );
+  }
+
+  private stepCameraOrient(): void {
+    const target = this.cameraOrientTarget;
+    if (!target) return;
+    this.cameraRig.quaternion.slerp(target, 0.15);
+    if (this.cameraRig.quaternion.angleTo(target) < 1e-3) {
+      this.cameraRig.quaternion.copy(target);
+      this.cameraOrientTarget = null;
+    }
   }
 
   public clearChatSelection(): void {
@@ -686,9 +719,10 @@ export class SplatViewer {
       selectionId: options.selectionId,
       worldGeneration: this.worldGeneration,
     };
+    // Close only hides the card; the annotation and its data stay in the scene.
     closeBtn.addEventListener("click", (event) => {
       event.stopPropagation();
-      void this.removeAnnotation(annotation);
+      card.style.display = "none";
     });
 
     if (options.worldObb && options.localObb) {
