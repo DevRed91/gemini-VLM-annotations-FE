@@ -1,6 +1,6 @@
 {
   "environment": {
-    "fixtureUrl": "http://127.0.0.1:5200/phase3.html?repetitions=20",
+    "fixtureUrl": "http://127.0.0.1:5200/phase3.html?repetitions=2",
     "viewerUrl": "http://127.0.0.1:5200/",
     "browser": "headless Chromium",
     "angle": "SwiftShader",
@@ -13,155 +13,32 @@
       480
     ]
   },
-  "startedAt": "2026-11-07T17:25:12.514Z",
+  "startedAt": "2026-11-08T14:30:54.497Z",
   "tests": [
     {
       "name": "viewer injects two fixed real-scene detections with distinct visible index masks",
-      "passed": true,
-      "details": {
-        "rightDiff": {
-          "count": 31689,
-          "bbox": [
-            458,
-            159,
-            607,
-            435
-          ]
-        },
-        "leftDiff": {
-          "count": 63376,
-          "bbox": [
-            0,
-            0,
-            367,
-            300
-          ]
-        },
-        "selections": [
-          {
-            "objectId": 1,
-            "label": 1,
-            "count": 6121,
-            "color": [
-              1,
-              0,
-              1
-            ],
-            "worldSize": [
-              1.3501721197241605,
-              0.7281520477671171,
-              0.6181987647104283
-            ]
-          },
-          {
-            "objectId": 2,
-            "label": 2,
-            "count": 6921,
-            "color": [
-              0.6745098039215687,
-              1,
-              0.2196078431372549
-            ],
-            "worldSize": [
-              1.7379146428557724,
-              1.445325307740376,
-              1.0319024677873028
-            ]
-          }
-        ]
-      }
+      "passed": false,
+      "error": "Error: Unexpected viewer resources: {\"ready\":true,\"mode\":\"index-mask\",\"numSplats\":699086,\"annotationCount\":2,\"modifiers\":1,\"helpers\":2,\"selections\":[{\"objectId\":1,\"label\":1,\"count\":6121,\"color\":[1,0,1],\"worldSize\":[1.3501721197241605,0.7281520477671171,0.6181987647104283]},{\"objectId\":2,\"label\":2,\"count\":6921,\"color\":[0.6745098039215687,1,0.2196078431372549],\"worldSize\":[1.7379146428557724,1.445325307740376,1.0319024677873028]}],\"shaderErrors\":[]}\n    at assert (file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:51:25)\n    at file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:267:5\n    at async viewerTest (file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:234:23)\n    at async file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:250:3"
     },
     {
       "name": "viewer clear-one restores the first object and hover preserves composition",
-      "passed": true,
-      "details": {
-        "restoreDiff": {
-          "count": 0,
-          "bbox": null
-        },
-        "hoverDiff": {
-          "count": 30029,
-          "bbox": [
-            461,
-            159,
-            607,
-            435
-          ]
-        },
-        "hoverClearDiff": {
-          "count": 0,
-          "bbox": null
-        }
-      }
+      "passed": false,
+      "error": "Error: Viewer two-selection fixture was not established\n    at assert (file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:51:25)\n    at file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:281:5\n    at viewerTest (file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:234:29)\n    at file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:280:9"
     },
     {
       "name": "viewer reload clears selections, helpers, annotations, and modifiers",
-      "passed": true,
-      "details": {
-        "state": {
-          "ready": true,
-          "mode": "index-mask",
-          "numSplats": 699086,
-          "annotationCount": 0,
-          "modifiers": 2,
-          "helpers": 0,
-          "selections": [],
-          "shaderErrors": []
-        },
-        "reloadDiff": {
-          "count": 0,
-          "bbox": null
-        }
-      }
+      "passed": false,
+      "error": "Error: Reload leaked viewer state: {\"ready\":true,\"mode\":\"index-mask\",\"numSplats\":699086,\"annotationCount\":0,\"modifiers\":1,\"helpers\":0,\"selections\":[],\"shaderErrors\":[]}\n    at assert (file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:51:25)\n    at file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:314:5\n    at async viewerTest (file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:234:23)\n    at async file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:309:3"
     },
     {
       "name": "viewer unsupported LOD source uses owned OBB fallback",
-      "passed": true,
-      "details": {
-        "fallbackState": {
-          "ready": true,
-          "mode": "obb-fallback",
-          "numSplats": 591166,
-          "annotationCount": 1,
-          "modifiers": 2,
-          "helpers": 1,
-          "selections": [],
-          "shaderErrors": []
-        },
-        "fallbackDiff": {
-          "count": 847,
-          "bbox": [
-            41,
-            20,
-            182,
-            140
-          ]
-        },
-        "clearDiff": {
-          "count": 0,
-          "bbox": null
-        }
-      }
+      "passed": false,
+      "error": "Error: Unexpected LOD fallback resources: {\"ready\":true,\"mode\":\"obb-fallback\",\"numSplats\":591166,\"annotationCount\":1,\"modifiers\":1,\"helpers\":1,\"selections\":[],\"shaderErrors\":[]}\n    at assert (file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:51:25)\n    at file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:332:5\n    at async viewerTest (file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:234:23)\n    at async file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:325:3"
     },
     {
       "name": "viewer stale world loads cannot replace the latest world",
-      "passed": true,
-      "details": {
-        "loadResults": [
-          false,
-          true
-        ],
-        "finalState": {
-          "ready": true,
-          "mode": "obb-fallback",
-          "numSplats": 0,
-          "annotationCount": 0,
-          "modifiers": 1,
-          "helpers": 0,
-          "selections": [],
-          "shaderErrors": []
-        }
-      }
+      "passed": false,
+      "error": "Error: Stale load modified the active world: {\"ready\":true,\"mode\":\"obb-fallback\",\"numSplats\":0,\"annotationCount\":0,\"modifiers\":0,\"helpers\":0,\"selections\":[],\"shaderErrors\":[]}\n    at assert (file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:51:25)\n    at file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:360:5\n    at async viewerTest (file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:234:23)\n    at async file:///Users/devrajreddy/Semantic_Uplifiting/gemini-VLM-annotations-FE/scripts/phase3-validate.mjs:350:3"
     }
   ],
   "expectedTests": [
@@ -203,169 +80,9 @@
   "duplicateTests": [],
   "performance": null,
   "viewer": {
-    "detections": {
-      "firstBox": [
-        0.1,
-        0.1,
-        0.5,
-        0.5
-      ],
-      "secondBox": [
-        0.4,
-        0.5,
-        0.8,
-        0.9
-      ],
-      "firstSelection": {
-        "objectId": 1,
-        "label": 1,
-        "count": 6121,
-        "color": [
-          1,
-          0,
-          1
-        ],
-        "worldSize": [
-          1.3501721197241605,
-          0.7281520477671171,
-          0.6181987647104283
-        ]
-      },
-      "secondSelection": {
-        "objectId": 2,
-        "label": 2,
-        "count": 6921,
-        "color": [
-          0.6745098039215687,
-          1,
-          0.2196078431372549
-        ],
-        "worldSize": [
-          1.7379146428557724,
-          1.445325307740376,
-          1.0319024677873028
-        ]
-      }
-    },
-    "states": {
-      "both": {
-        "ready": true,
-        "mode": "index-mask",
-        "numSplats": 699086,
-        "annotationCount": 2,
-        "modifiers": 2,
-        "helpers": 2,
-        "selections": [
-          {
-            "objectId": 1,
-            "label": 1,
-            "count": 6121,
-            "color": [
-              1,
-              0,
-              1
-            ],
-            "worldSize": [
-              1.3501721197241605,
-              0.7281520477671171,
-              0.6181987647104283
-            ]
-          },
-          {
-            "objectId": 2,
-            "label": 2,
-            "count": 6921,
-            "color": [
-              0.6745098039215687,
-              1,
-              0.2196078431372549
-            ],
-            "worldSize": [
-              1.7379146428557724,
-              1.445325307740376,
-              1.0319024677873028
-            ]
-          }
-        ],
-        "shaderErrors": []
-      },
-      "reloaded": {
-        "ready": true,
-        "mode": "index-mask",
-        "numSplats": 699086,
-        "annotationCount": 0,
-        "modifiers": 2,
-        "helpers": 0,
-        "selections": [],
-        "shaderErrors": []
-      },
-      "lodFallback": {
-        "ready": true,
-        "mode": "obb-fallback",
-        "numSplats": 591166,
-        "annotationCount": 1,
-        "modifiers": 2,
-        "helpers": 1,
-        "selections": [],
-        "shaderErrors": []
-      },
-      "afterStaleLoads": {
-        "ready": true,
-        "mode": "obb-fallback",
-        "numSplats": 0,
-        "annotationCount": 0,
-        "modifiers": 1,
-        "helpers": 0,
-        "selections": [],
-        "shaderErrors": []
-      }
-    },
-    "pixelDiffs": {
-      "rightVsBaseline": {
-        "count": 31689,
-        "bbox": [
-          458,
-          159,
-          607,
-          435
-        ]
-      },
-      "bothVsRight": {
-        "count": 63376,
-        "bbox": [
-          0,
-          0,
-          367,
-          300
-        ]
-      },
-      "clearOneVsIndependentReference": {
-        "count": 0,
-        "bbox": null
-      },
-      "hoverVsPersistent": {
-        "count": 30029,
-        "bbox": [
-          461,
-          159,
-          607,
-          435
-        ]
-      },
-      "reloadVsBaseline": {
-        "count": 0,
-        "bbox": null
-      },
-      "lodFallbackVsBaseline": {
-        "count": 847,
-        "bbox": [
-          41,
-          20,
-          182,
-          140
-        ]
-      }
-    }
+    "detections": {},
+    "states": {},
+    "pixelDiffs": {}
   },
   "shaderErrors": [],
   "finalGlError": 0,
@@ -379,22 +96,22 @@
     {
       "page": "http://127.0.0.1:5200/",
       "type": "warning",
-      "text": "[.WebGL-0x1140083a200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+      "text": "[.WebGL-0x10c0083f000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
     },
     {
       "page": "http://127.0.0.1:5200/",
       "type": "warning",
-      "text": "[.WebGL-0x1140083a200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+      "text": "[.WebGL-0x10c0083f000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
     },
     {
       "page": "http://127.0.0.1:5200/",
       "type": "warning",
-      "text": "[.WebGL-0x1140083a200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+      "text": "[.WebGL-0x10c0083f000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
     },
     {
       "page": "http://127.0.0.1:5200/",
       "type": "warning",
-      "text": "[.WebGL-0x1140083a200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+      "text": "[.WebGL-0x10c0083f000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
     },
     {
       "page": "http://127.0.0.1:5200/",
@@ -408,13 +125,28 @@
     },
     {
       "page": "http://127.0.0.1:5200/",
-      "type": "warning",
-      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently"
+      "type": "log",
+      "text": "[cluster-debug] fixed-right {box: Array(4), sampledRayHits: 195, clusterPoints: 84, clusterDims: Object, centroid: Array(3)}"
     },
     {
       "page": "http://127.0.0.1:5200/",
-      "type": "warning",
-      "text": "Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently"
+      "type": "log",
+      "text": "[cluster-debug] fixed-right lift {selected: 6121, of: 699086, candidates: 6708, opacityRejected: 587}"
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "log",
+      "text": "[cluster-debug] fixed-left {box: Array(4), sampledRayHits: 196, clusterPoints: 142, clusterDims: Object, centroid: Array(3)}"
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "log",
+      "text": "[cluster-debug] fixed-left lift {selected: 6921, of: 699086, candidates: 7732, opacityRejected: 811}"
+    },
+    {
+      "page": "http://127.0.0.1:5200/",
+      "type": "log",
+      "text": "[cluster-debug] lod-fallback {box: Array(4), sampledRayHits: 36, clusterPoints: 5, clusterDims: Object, centroid: Array(3)}"
     }
   ],
   "pageErrors": [],

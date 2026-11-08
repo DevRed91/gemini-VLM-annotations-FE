@@ -1,0 +1,695 @@
+{
+  "environment": {
+    "viewerUrl": "http://127.0.0.1:5201/",
+    "browser": "headless Chromium",
+    "angle": "SwiftShader",
+    "viewport": [
+      640,
+      480
+    ]
+  },
+  "startedAt": "2026-11-08T14:31:46.653Z",
+  "tests": [
+    {
+      "name": "per-world registry is created on load and starts empty",
+      "passed": true,
+      "details": {
+        "ready": true,
+        "numSplats": 699086,
+        "annotationCount": 0,
+        "helpers": 0,
+        "registry": {
+          "size": 0,
+          "objects": []
+        },
+        "shaderErrors": []
+      }
+    },
+    {
+      "name": "a created annotation registers one spatial object under its canonical ID",
+      "passed": true,
+      "details": {
+        "object": {
+          "objectId": "annotation-1",
+          "semanticLabel": "fixed-sofa",
+          "attributes": {
+            "description": "test",
+            "obb": "cluster"
+          },
+          "worldObb": {
+            "position": {
+              "x": 0.8616581184003651,
+              "y": 0.7232327577327189,
+              "z": -0.3310264362549431
+            },
+            "quaternion": {
+              "isQuaternion": true,
+              "_x": 0.7233355061227175,
+              "_y": -0.13117268447468572,
+              "_z": -0.2610827673231076,
+              "_w": 0.6256318894020707
+            },
+            "size": {
+              "x": 1.7379146428557724,
+              "y": 1.445325307740376,
+              "z": 1.0319024677873028
+            }
+          }
+        },
+        "state": {
+          "ready": true,
+          "numSplats": 699086,
+          "annotationCount": 1,
+          "helpers": 1,
+          "registry": {
+            "size": 1,
+            "objects": [
+              {
+                "objectId": "annotation-1",
+                "semanticLabel": "fixed-sofa",
+                "attributes": {
+                  "description": "test",
+                  "obb": "cluster"
+                },
+                "worldObb": {
+                  "position": {
+                    "x": 0.8616581184003651,
+                    "y": 0.7232327577327189,
+                    "z": -0.3310264362549431
+                  },
+                  "quaternion": {
+                    "isQuaternion": true,
+                    "_x": 0.7233355061227175,
+                    "_y": -0.13117268447468572,
+                    "_z": -0.2610827673231076,
+                    "_w": 0.6256318894020707
+                  },
+                  "size": {
+                    "x": 1.7379146428557724,
+                    "y": 1.445325307740376,
+                    "z": 1.0319024677873028
+                  }
+                }
+              }
+            ]
+          },
+          "shaderErrors": []
+        }
+      }
+    },
+    {
+      "name": "the same object annotated twice yields distinct spatial objects",
+      "passed": true,
+      "details": {
+        "ids": [
+          "annotation-1",
+          "annotation-2"
+        ],
+        "state": {
+          "ready": true,
+          "numSplats": 699086,
+          "annotationCount": 2,
+          "helpers": 2,
+          "registry": {
+            "size": 2,
+            "objects": [
+              {
+                "objectId": "annotation-1",
+                "semanticLabel": "fixed-sofa",
+                "attributes": {
+                  "description": "test",
+                  "obb": "cluster"
+                },
+                "worldObb": {
+                  "position": {
+                    "x": 0.8616581184003651,
+                    "y": 0.7232327577327189,
+                    "z": -0.3310264362549431
+                  },
+                  "quaternion": {
+                    "isQuaternion": true,
+                    "_x": 0.7233355061227175,
+                    "_y": -0.13117268447468572,
+                    "_z": -0.2610827673231076,
+                    "_w": 0.6256318894020707
+                  },
+                  "size": {
+                    "x": 1.7379146428557724,
+                    "y": 1.445325307740376,
+                    "z": 1.0319024677873028
+                  }
+                }
+              },
+              {
+                "objectId": "annotation-2",
+                "semanticLabel": "fixed-sofa",
+                "attributes": {
+                  "description": "test",
+                  "obb": "cluster"
+                },
+                "worldObb": {
+                  "position": {
+                    "x": 0.6559854860904762,
+                    "y": 0.46452037873696317,
+                    "z": -1.0929417141911102
+                  },
+                  "quaternion": {
+                    "isQuaternion": true,
+                    "_x": 0.06928618236890857,
+                    "_y": 0.09171007635877931,
+                    "_z": -0.2752947213485782,
+                    "_w": 0.9544639873901047
+                  },
+                  "size": {
+                    "x": 1.5275011375605372,
+                    "y": 0.29941416247586844,
+                    "z": 0.04000000000000832
+                  }
+                }
+              }
+            ]
+          },
+          "shaderErrors": []
+        }
+      }
+    },
+    {
+      "name": "removing an annotation unregisters exactly its spatial object",
+      "passed": true,
+      "details": {
+        "removed": {
+          "found": true
+        },
+        "state": {
+          "ready": true,
+          "numSplats": 699086,
+          "annotationCount": 1,
+          "helpers": 1,
+          "registry": {
+            "size": 1,
+            "objects": [
+              {
+                "objectId": "annotation-1",
+                "semanticLabel": "fixed-sofa",
+                "attributes": {
+                  "description": "test",
+                  "obb": "cluster"
+                },
+                "worldObb": {
+                  "position": {
+                    "x": 0.8616581184003651,
+                    "y": 0.7232327577327189,
+                    "z": -0.3310264362549431
+                  },
+                  "quaternion": {
+                    "isQuaternion": true,
+                    "_x": 0.7233355061227175,
+                    "_y": -0.13117268447468572,
+                    "_z": -0.2610827673231076,
+                    "_w": 0.6256318894020707
+                  },
+                  "size": {
+                    "x": 1.7379146428557724,
+                    "y": 1.445325307740376,
+                    "z": 1.0319024677873028
+                  }
+                }
+              }
+            ]
+          },
+          "shaderErrors": []
+        }
+      }
+    },
+    {
+      "name": "clear-all drops every annotation and empties the retained registry",
+      "passed": true,
+      "details": {
+        "ready": true,
+        "numSplats": 699086,
+        "annotationCount": 0,
+        "helpers": 0,
+        "registry": {
+          "size": 0,
+          "objects": []
+        },
+        "shaderErrors": []
+      }
+    },
+    {
+      "name": "reloading a world installs a fresh empty registry with monotonic IDs",
+      "passed": true,
+      "details": {
+        "state": {
+          "ready": true,
+          "numSplats": 591166,
+          "annotationCount": 1,
+          "helpers": 1,
+          "registry": {
+            "size": 1,
+            "objects": [
+              {
+                "objectId": "annotation-3",
+                "semanticLabel": "fixed-lamp",
+                "attributes": {
+                  "description": "test",
+                  "obb": "cluster"
+                },
+                "worldObb": {
+                  "position": {
+                    "x": 1.050219076485644,
+                    "y": 0.8182388244786397,
+                    "z": -0.8503123514998945
+                  },
+                  "quaternion": {
+                    "isQuaternion": true,
+                    "_x": 0.3745508501226128,
+                    "_y": 0.9005614733328579,
+                    "_z": 0.00654722633599031,
+                    "_w": -0.22058519272219015
+                  },
+                  "size": {
+                    "x": 0.6203636680539745,
+                    "y": 0.2646834252894672,
+                    "z": 0.1977447819009727
+                  }
+                }
+              }
+            ]
+          },
+          "shaderErrors": []
+        }
+      }
+    },
+    {
+      "name": "pin-only annotations register a zero-size point OBB",
+      "passed": true,
+      "details": {
+        "pointObject": {
+          "objectId": "annotation-4",
+          "semanticLabel": "point-probe",
+          "attributes": {
+            "description": "point",
+            "obb": "point"
+          },
+          "worldObb": {
+            "position": {
+              "x": 0.2,
+              "y": 0.4,
+              "z": 0.2
+            },
+            "quaternion": {
+              "isQuaternion": true,
+              "_x": 0,
+              "_y": 0,
+              "_z": 0,
+              "_w": 1
+            },
+            "size": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            }
+          }
+        }
+      }
+    }
+  ],
+  "expectedTests": [
+    "per-world registry is created on load and starts empty",
+    "a created annotation registers one spatial object under its canonical ID",
+    "the same object annotated twice yields distinct spatial objects",
+    "removing an annotation unregisters exactly its spatial object",
+    "clear-all drops every annotation and empties the retained registry",
+    "reloading a world installs a fresh empty registry with monotonic IDs",
+    "pin-only annotations register a zero-size point OBB"
+  ],
+  "missingTests": [],
+  "unexpectedTests": [],
+  "duplicateTests": [],
+  "viewer": {
+    "states": {
+      "initial": {
+        "ready": true,
+        "numSplats": 699086,
+        "annotationCount": 0,
+        "helpers": 0,
+        "registry": {
+          "size": 0,
+          "objects": []
+        },
+        "shaderErrors": []
+      },
+      "firstAnnotation": {
+        "ready": true,
+        "numSplats": 699086,
+        "annotationCount": 1,
+        "helpers": 1,
+        "registry": {
+          "size": 1,
+          "objects": [
+            {
+              "objectId": "annotation-1",
+              "semanticLabel": "fixed-sofa",
+              "attributes": {
+                "description": "test",
+                "obb": "cluster"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 0.8616581184003651,
+                  "y": 0.7232327577327189,
+                  "z": -0.3310264362549431
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0.7233355061227175,
+                  "_y": -0.13117268447468572,
+                  "_z": -0.2610827673231076,
+                  "_w": 0.6256318894020707
+                },
+                "size": {
+                  "x": 1.7379146428557724,
+                  "y": 1.445325307740376,
+                  "z": 1.0319024677873028
+                }
+              }
+            }
+          ]
+        },
+        "shaderErrors": []
+      },
+      "duplicate": {
+        "ready": true,
+        "numSplats": 699086,
+        "annotationCount": 2,
+        "helpers": 2,
+        "registry": {
+          "size": 2,
+          "objects": [
+            {
+              "objectId": "annotation-1",
+              "semanticLabel": "fixed-sofa",
+              "attributes": {
+                "description": "test",
+                "obb": "cluster"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 0.8616581184003651,
+                  "y": 0.7232327577327189,
+                  "z": -0.3310264362549431
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0.7233355061227175,
+                  "_y": -0.13117268447468572,
+                  "_z": -0.2610827673231076,
+                  "_w": 0.6256318894020707
+                },
+                "size": {
+                  "x": 1.7379146428557724,
+                  "y": 1.445325307740376,
+                  "z": 1.0319024677873028
+                }
+              }
+            },
+            {
+              "objectId": "annotation-2",
+              "semanticLabel": "fixed-sofa",
+              "attributes": {
+                "description": "test",
+                "obb": "cluster"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 0.6559854860904762,
+                  "y": 0.46452037873696317,
+                  "z": -1.0929417141911102
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0.06928618236890857,
+                  "_y": 0.09171007635877931,
+                  "_z": -0.2752947213485782,
+                  "_w": 0.9544639873901047
+                },
+                "size": {
+                  "x": 1.5275011375605372,
+                  "y": 0.29941416247586844,
+                  "z": 0.04000000000000832
+                }
+              }
+            }
+          ]
+        },
+        "shaderErrors": []
+      },
+      "afterRemoval": {
+        "ready": true,
+        "numSplats": 699086,
+        "annotationCount": 1,
+        "helpers": 1,
+        "registry": {
+          "size": 1,
+          "objects": [
+            {
+              "objectId": "annotation-1",
+              "semanticLabel": "fixed-sofa",
+              "attributes": {
+                "description": "test",
+                "obb": "cluster"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 0.8616581184003651,
+                  "y": 0.7232327577327189,
+                  "z": -0.3310264362549431
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0.7233355061227175,
+                  "_y": -0.13117268447468572,
+                  "_z": -0.2610827673231076,
+                  "_w": 0.6256318894020707
+                },
+                "size": {
+                  "x": 1.7379146428557724,
+                  "y": 1.445325307740376,
+                  "z": 1.0319024677873028
+                }
+              }
+            }
+          ]
+        },
+        "shaderErrors": []
+      },
+      "afterClearAll": {
+        "ready": true,
+        "numSplats": 699086,
+        "annotationCount": 0,
+        "helpers": 0,
+        "registry": {
+          "size": 0,
+          "objects": []
+        },
+        "shaderErrors": []
+      },
+      "afterReload": {
+        "ready": true,
+        "numSplats": 591166,
+        "annotationCount": 1,
+        "helpers": 1,
+        "registry": {
+          "size": 1,
+          "objects": [
+            {
+              "objectId": "annotation-3",
+              "semanticLabel": "fixed-lamp",
+              "attributes": {
+                "description": "test",
+                "obb": "cluster"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 1.050219076485644,
+                  "y": 0.8182388244786397,
+                  "z": -0.8503123514998945
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0.3745508501226128,
+                  "_y": 0.9005614733328579,
+                  "_z": 0.00654722633599031,
+                  "_w": -0.22058519272219015
+                },
+                "size": {
+                  "x": 0.6203636680539745,
+                  "y": 0.2646834252894672,
+                  "z": 0.1977447819009727
+                }
+              }
+            }
+          ]
+        },
+        "shaderErrors": []
+      },
+      "pointProbeRegistered": {
+        "ready": true,
+        "numSplats": 591166,
+        "annotationCount": 2,
+        "helpers": 1,
+        "registry": {
+          "size": 2,
+          "objects": [
+            {
+              "objectId": "annotation-3",
+              "semanticLabel": "fixed-lamp",
+              "attributes": {
+                "description": "test",
+                "obb": "cluster"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 1.050219076485644,
+                  "y": 0.8182388244786397,
+                  "z": -0.8503123514998945
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0.3745508501226128,
+                  "_y": 0.9005614733328579,
+                  "_z": 0.00654722633599031,
+                  "_w": -0.22058519272219015
+                },
+                "size": {
+                  "x": 0.6203636680539745,
+                  "y": 0.2646834252894672,
+                  "z": 0.1977447819009727
+                }
+              }
+            },
+            {
+              "objectId": "annotation-4",
+              "semanticLabel": "point-probe",
+              "attributes": {
+                "description": "point",
+                "obb": "point"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 0.2,
+                  "y": 0.4,
+                  "z": 0.2
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0,
+                  "_y": 0,
+                  "_z": 0,
+                  "_w": 1
+                },
+                "size": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                }
+              }
+            }
+          ]
+        },
+        "shaderErrors": []
+      },
+      "pointProbe": {
+        "ready": true,
+        "numSplats": 591166,
+        "annotationCount": 1,
+        "helpers": 1,
+        "registry": {
+          "size": 1,
+          "objects": [
+            {
+              "objectId": "annotation-3",
+              "semanticLabel": "fixed-lamp",
+              "attributes": {
+                "description": "test",
+                "obb": "cluster"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 1.050219076485644,
+                  "y": 0.8182388244786397,
+                  "z": -0.8503123514998945
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0.3745508501226128,
+                  "_y": 0.9005614733328579,
+                  "_z": 0.00654722633599031,
+                  "_w": -0.22058519272219015
+                },
+                "size": {
+                  "x": 0.6203636680539745,
+                  "y": 0.2646834252894672,
+                  "z": 0.1977447819009727
+                }
+              }
+            }
+          ]
+        },
+        "shaderErrors": []
+      }
+    }
+  },
+  "shaderErrors": [],
+  "finalGlError": 0,
+  "consoleMessages": [
+    {
+      "page": "http://127.0.0.1:5201/",
+      "type": "debug",
+      "text": "[vite] connecting..."
+    },
+    {
+      "page": "http://127.0.0.1:5201/",
+      "type": "warning",
+      "text": "[.WebGL-0x1040083c000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "page": "http://127.0.0.1:5201/",
+      "type": "warning",
+      "text": "[.WebGL-0x1040083c000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "page": "http://127.0.0.1:5201/",
+      "type": "warning",
+      "text": "[.WebGL-0x1040083c000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "page": "http://127.0.0.1:5201/",
+      "type": "warning",
+      "text": "[.WebGL-0x1040083c000]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+    },
+    {
+      "page": "http://127.0.0.1:5201/",
+      "type": "debug",
+      "text": "[vite] connected."
+    },
+    {
+      "page": "http://127.0.0.1:5201/",
+      "type": "log",
+      "text": "[cluster-debug] fixed-sofa {box: Array(4), sampledRayHits: 196, clusterPoints: 142, clusterDims: Object, centroid: Array(3)}"
+    },
+    {
+      "page": "http://127.0.0.1:5201/",
+      "type": "log",
+      "text": "[cluster-debug] fixed-sofa {box: Array(4), sampledRayHits: 196, clusterPoints: 191, clusterDims: Object, centroid: Array(3)}"
+    },
+    {
+      "page": "http://127.0.0.1:5201/",
+      "type": "log",
+      "text": "[cluster-debug] fixed-lamp {box: Array(4), sampledRayHits: 36, clusterPoints: 5, clusterDims: Object, centroid: Array(3)}"
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": []
+}

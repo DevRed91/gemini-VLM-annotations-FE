@@ -183,6 +183,7 @@ try {
     const vite = path.join(root, "node_modules/vite/bin/vite.js");
     server = spawn(process.execPath, [vite, "--host", "127.0.0.1", "--port", "5200", "--strictPort", "--no-open"], {
       cwd: root,
+      env: { ...process.env, VITE_ENABLE_GAUSSIAN_HIGHLIGHTING: "true" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     server.stdout.on("data", (chunk) => process.stdout.write(`[vite] ${chunk}`));

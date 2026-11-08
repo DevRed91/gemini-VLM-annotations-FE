@@ -190,7 +190,9 @@ A reference performance run on `Apartment.sog` with 699,086 splats reported:
 
 **Status: Implemented; browser validation is in progress.**
 
-The integrated viewer defaults to the static, non-LOD `/Apartment.sog` source. A fitted world-space OBB is passed directly to `liftCluster()`; world-to-local conversion is used only for the wireframe helper and the unsupported-source OBB tint fallback.
+The integrated viewer defaults to the static, non-LOD `/Apartment.sog` source. Annotation pins, object labels, and projected OBB wireframes remain visible by default, without persistent Gaussian tinting. Set `VITE_ENABLE_GAUSSIAN_HIGHLIGHTING=true` to opt into the experimental `GaussianObjectHighlighter` and OBB tint fallback; Gaussian index lifting remains available for development and validation.
+
+When highlighting is enabled, a fitted world-space OBB is passed directly to `liftCluster()`; world-to-local conversion is used only for the wireframe helper and the unsupported-source OBB tint fallback.
 
 - One 4096-wide R8UI mask stores labels `1..255`; zero is unselected.
 - One 256-entry palette texture gives each object a stable, distinct color.
@@ -201,6 +203,10 @@ The integrated viewer defaults to the static, non-LOD `/Apartment.sog` source. A
 - LOD/paged sources are not index-lifted. Detected regions use the OBB tint fallback instead.
 
 This remains centre/OBB membership, not semantic segmentation; background Gaussians inside a fitted box may be included.
+
+### Object-search track — Phase 0 registry integration
+
+Phase 0 of the chat object-search plan (`docs/chat-object-search-investigation.md`) is implemented: every viewer annotation registers into a per-world `SpatialObjectRegistry` as a spatial object keyed by its canonical `annotation-N` ID, removals unregister, and a world reload installs a fresh registry. Labels, VLM descriptions, and world OBBs are queryable in-memory; pin-only fallbacks register a zero-size point OBB tagged `obb: "point"`. Details: `docs/chat-object-search-phase-0-registry.md`, results: `docs/chat-object-search-phase-0-results.json`.
 
 ## Browser validation
 
@@ -216,6 +222,7 @@ Run the regression and integration suites:
 ```bash
 npm run validate:phase2
 npm run validate:phase3
+npm run validate:registry
 ```
 
 Phase 3 defaults to 20 real-scene selection samples and writes `docs/phase3-results.json`. For a shorter development check, `PHASE3_REPETITIONS=2 npm run validate:phase3` reduces only the timing sample count; it is not the acceptance run.

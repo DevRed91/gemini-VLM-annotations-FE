@@ -13,8 +13,9 @@ import {
   initMobileControls,
   isMobileDevice,
 } from "./utils/mobileJoystick";
-import { HoverTint, OBB, pickNearestOBB } from "./utils/hoverTint";
+import { HoverTint, OBB } from "./utils/hoverTint";
 import { fitOBB, obbWorldToLocal } from "./utils/obbFit";
+import { SpatialObjectRegistry } from "./utils/spatialObjectRegistry";
 import GeometricContextManager from "./GeometricContextManager/GeometricContextManager";
 import { GaussianObjectHighlighter } from "./utils/gaussianObjectHighlighter";
 import { defaultGaussianMaskColor } from "./utils/gaussianMaskManager";
@@ -26,6 +27,9 @@ const API_BASE_URL =
   "/api";
 const BYPASS_TUNNEL_REMINDER =
   (import.meta.env.VITE_BYPASS_TUNNEL_REMINDER as string | undefined) === "true";
+// Experimental Gaussian tinting is opt-in; annotation pins and OBB wireframes stay on.
+const ENABLE_GAUSSIAN_HIGHLIGHTING =
+  (import.meta.env.VITE_ENABLE_GAUSSIAN_HIGHLIGHTING as string | undefined) === "true";
 
 function buildAnnotateEndpoint(baseUrl: string): string {
   const normalized = baseUrl.replace(/\/+$/, "");
@@ -82,15 +86,18 @@ export class SplatViewer {
   private annotations: ViewerAnnotation[] = [];
   private isSelecting = false;
   private annotationLoadingEl: HTMLElement | null = null;
-  private hoverTint: HoverTint | null = null;
   private objectHighlighter: GaussianObjectHighlighter | null = null;
   private worldGeneration = 0;
   private annotationSequence = 0;
+  /**
+   * Per-world semantic inventory (Phase 0, registry integration). Created with
+   * each successful `loadWorld`, dropped with the world's resources; see
+   * `docs/chat-object-search-phase-0-registry.md` for the data contract.
+   */
+  private spatialRegistry: SpatialObjectRegistry | null = null;
   private readonly disposedSplats = new WeakSet<SplatMesh>();
   private readonly geometricContext = new GeometricContextManager();
   private apartments: { id: string; obb: OBB; source?: THREE.Object3D; geomSize?: THREE.Vector3 }[] = [];
-  private hoveredApartment: { id: string; obb: OBB } | null = null;
-  private hoverRaycaster = new THREE.Raycaster();
   private readonly shaderErrors: string[] = [];
   public lastClusterFit: {
     world: OBB;
@@ -148,7 +155,6 @@ export class SplatViewer {
     this.setupAnnotationUI();
     // this.setupSelectionBox();
     this.setupClickInteraction();
-    this.setupHoverInteraction();
     this.setupLoadingUI();
     // Demo: treat the green box as an apartment unit. Replace with real OBBs.
     this.registerApartment("demo-cube", this.cube, new THREE.Vector3(0.13, 1, 0.1));
@@ -197,8 +203,7 @@ export class SplatViewer {
     let lastTime = performance.now();
     this.renderer.setAnimationLoop((time) => {
       this.controls.update(this.cameraRig);
-      this.camera.updateMatrixWorld(); 
-      this.syncApartmentOBBs();
+      this.camera.updateMatrixWorld();
       // this.lockCameraHeightToGround();
       const MOVE_SPEED = 2.0;
       const deltaTime = (time - lastTime) / 1000;
@@ -214,22 +219,6 @@ export class SplatViewer {
       this.updateAnnotationLabels();
       this.renderer.render(this.scene, this.camera);
     });
-  }
-
-  /** Keep OBBs that track a live object current. */
-  private syncApartmentOBBs() {
-    let hoveredMoved = false;
-    for (const apt of this.apartments) {
-      if (!apt.source || !apt.geomSize) continue;
-      const before = apt.obb.getWorldMatrix().elements.join() + apt.obb.size.toArray().join();
-      apt.obb.syncFromObject3D(apt.source, apt.geomSize);
-      const after = apt.obb.getWorldMatrix().elements.join() + apt.obb.size.toArray().join();
-      if (before !== after && apt.id === this.hoveredApartment?.id) hoveredMoved = true;
-    }
-    if (hoveredMoved && this.hoverTint) {
-      this.hoverTint.refresh();
-      this.currentSplat?.updateVersion();
-    }
   }
 
   private setupClickInteraction() {
@@ -258,28 +247,6 @@ export class SplatViewer {
     } else {
       this.apartments.push({ id, obb: OBB.fromObject3D(a, geomSize!), source: a, geomSize });
     }
-  }
-
-  private setupHoverInteraction() {
-    const canvas = this.renderer.domElement;
-    canvas.addEventListener("pointermove", (e) => {
-      if (!this.hoverTint) return;
-      const rect = canvas.getBoundingClientRect();
-      const ndc = new THREE.Vector2(
-        ((e.clientX - rect.left) / rect.width) * 2 - 1,
-        -((e.clientY - rect.top) / rect.height) * 2 + 1,
-      );
-      this.hoverRaycaster.setFromCamera(ndc, this.camera);
-      const hit = pickNearestOBB(this.hoverRaycaster.ray, this.apartments);
-      if (hit?.id === this.hoveredApartment?.id) return;
-      this.hoveredApartment = hit;
-      console.log("[hover]", hit?.id ?? null, hit?.obb.size.toArray());
-      this.hoverTint.setHovered(hit ? hit.obb : null);
-    });
-    canvas.addEventListener("pointerleave", () => {
-      this.hoveredApartment = null;
-      this.hoverTint?.setHovered(null);
-    });
   }
 
   private setupAnnotationUI() {
@@ -399,12 +366,11 @@ export class SplatViewer {
   }
 
   private removeAnnotationVisual(annotation: ViewerAnnotation): void {
+    // Unregister happens here so single deletes, clear-all, and world switches
+    // all leave the registry without the removed annotation's spatial object.
+    this.spatialRegistry?.remove(annotation.apartmentId);
     annotation.element.remove();
     this.apartments = this.apartments.filter((item) => item.id !== annotation.apartmentId);
-    if (this.hoveredApartment?.id === annotation.apartmentId) {
-      this.hoveredApartment = null;
-      this.hoverTint?.setHovered(null);
-    }
     if (annotation.helper) {
       annotation.helper.removeFromParent();
       annotation.helper.geometry.dispose();
@@ -421,14 +387,13 @@ export class SplatViewer {
   private clearAnnotationVisuals(): void {
     for (const annotation of this.annotations) this.removeAnnotationVisual(annotation);
     this.annotations = [];
-    this.hoveredApartment = null;
-    this.hoverTint?.setHovered(null);
   }
 
   private clearWorldResources(): void {
+    // Annotations unregister (while the registry is still alive) one by one,
+    // then the per-world registry itself is dropped with the world.
     this.clearAnnotationVisuals();
-    this.hoverTint?.dispose();
-    this.hoverTint = null;
+    this.spatialRegistry = null;
     this.objectHighlighter?.dispose();
     this.objectHighlighter = null;
     if (this.currentSplat) this.disposeSplat(this.currentSplat);
@@ -471,7 +436,7 @@ export class SplatViewer {
         return false;
       }
 
-      const highlighter = isNonLodSplat(splat)
+      const highlighter = ENABLE_GAUSSIAN_HIGHLIGHTING && isNonLodSplat(splat)
         ? await GaussianObjectHighlighter.create(splat)
         : null;
       if (generation !== this.worldGeneration) {
@@ -480,9 +445,10 @@ export class SplatViewer {
         return false;
       }
 
-      // Persistent label masking is installed before transient hover tint.
       this.objectHighlighter = highlighter;
-      this.hoverTint = new HoverTint(splat);
+      // Fresh scene inventory per world (annotation IDs never reset, so the
+      // generated `annotation-N` IDs cannot collide across worlds either).
+      this.spatialRegistry = new SpatialObjectRegistry();
       this.splatLoaded = true;
       return true;
     } catch (error) {
@@ -622,7 +588,7 @@ export class SplatViewer {
         this.currentSplat.add(helper);
         annotation.helper = helper;
 
-        if (!options.selectionOwner) {
+        if (ENABLE_GAUSSIAN_HIGHLIGHTING && !options.selectionOwner) {
           const fallback = new HoverTint(this.currentSplat, {
             space: "splat",
             color,
@@ -637,7 +603,52 @@ export class SplatViewer {
 
     document.body.appendChild(container);
     this.annotations.push(annotation);
+    this.registerAnnotation(annotation, {
+      label,
+      description: options.description,
+      clusterObb: Boolean(annotation.worldObb),
+    });
     return annotation;
+  }
+
+  /**
+   * Registry data contract (Phase 0, registry integration):
+   * - `objectId` is the canonical `apartmentId` (`annotation-N`); the Gaussian
+   *   mask ID is never exposed as a registry ID.
+   * - `semanticLabel` is the annotation label; `description` (VLM free text)
+   *   and `obb` (`"cluster"` fitted OBB vs `"point"` pin-only fallback) ride
+   *   in `attributes`.
+   * - Cluster-fitted annotations store their world OBB; pin-only fallbacks
+   *   store a zero-size point OBB at the pin position, so later spatial
+   *   predicates can exclude them via the `obb` attribute.
+   * Registration must not break the annotation flow, so contract violations
+   * are logged instead of thrown.
+   */
+  private registerAnnotation(
+    annotation: ViewerAnnotation,
+    details: { label: string; description?: string; clusterObb: boolean },
+  ): void {
+    if (!this.spatialRegistry) return;
+    try {
+      this.spatialRegistry.register({
+        objectId: annotation.apartmentId,
+        semanticLabel: details.label,
+        attributes: {
+          ...(details.description ? { description: details.description } : {}),
+          obb: details.clusterObb ? "cluster" : "point",
+        },
+        // The registry stores defensive clones; `!` is safe: a cluster-fitted
+        // annotation always has `worldObb` assigned before this call.
+        worldObb: details.clusterObb
+          ? annotation.worldObb!
+          : new OBB({
+              position: annotation.position,
+              size: new THREE.Vector3(0, 0, 0),
+            }),
+      });
+    } catch (error) {
+      console.error(`[registry] Failed to register ${annotation.apartmentId}:`, error);
+    }
   }
 
   private sanitizeDetectionBox(
@@ -695,6 +706,21 @@ export class SplatViewer {
     );
     if (measured) {
       const fit = fitOBB(measured.points);
+      const fmt = (v: number) => Number(v.toFixed(3));
+      console.log(`[cluster-debug] ${detection.label}`, {
+        box,
+        sampledRayHits: sampledPoints.length,
+        clusterPoints: measured.points.length,
+        clusterDims: {
+          w: fmt(measured.dimensions.width),
+          h: fmt(measured.dimensions.height),
+          d: fmt(measured.dimensions.depth),
+        },
+        centroid: measured.centroid.toArray().map(fmt),
+        obbMethod: fit?.method,
+        obbSize: fit?.obb.size.toArray().map(fmt),
+        obbEigenvalues: fit?.eigenvalues.map((e) => Number(e.toExponential(3))),
+      });
       if (fit) {
         // Only the fallback/helper use world-to-local conversion; lifting stays world-space.
         const local = obbWorldToLocal(fit.obb, splat);
@@ -702,6 +728,14 @@ export class SplatViewer {
         const selection = owner
           ? await owner.select(fit.obb, { minOpacity: 0.05 })
           : null;
+        if (selection) {
+          console.log(`[cluster-debug] ${detection.label} lift`, {
+            selected: selection.selectedIds.length,
+            of: selection.lift.numSplats,
+            candidates: selection.lift.candidates,
+            opacityRejected: selection.lift.opacityRejected,
+          });
+        }
         if (owner && (!selection || generation !== this.worldGeneration)) return null;
         if (generation !== this.worldGeneration || this.currentSplat !== splat) return null;
 
@@ -857,6 +891,11 @@ if (import.meta.env.DEV) {
     get lastFit() { return viewer.lastClusterFit; },
     get selections() { return (viewer as any).objectHighlighter?.list() ?? []; },
     get annotationCount() { return (viewer as any).annotations.length; },
+    get registry() {
+      const registry: SpatialObjectRegistry | null = (viewer as any).spatialRegistry;
+      return registry ? { size: registry.size, objects: registry.list() } : null;
+    },
+    get spatialRegistry() { return (viewer as any).spatialRegistry; },
     get shaderErrors() { return [...(viewer as any).shaderErrors]; },
     glError() { return (viewer as any).renderer.getContext().getError(); },
     capture() {
