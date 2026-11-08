@@ -5,7 +5,9 @@
     "preview": "vite preview",
     "validate:phase2": "node scripts/phase2-validate.mjs",
     "validate:phase3": "node scripts/phase3-validate.mjs",
-    "validate:registry": "node scripts/registry-validate.mjs"
+    "validate:registry": "node scripts/registry-validate.mjs",
+    "validate:search": "node scripts/spatial-search-validate.mjs",
+    "test": "node --test tests/"
   },
   "dependencies": {
     "@sparkjsdev/spark": "^2.0.0",

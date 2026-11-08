@@ -1,0 +1,489 @@
+{
+  "environment": {
+    "viewerUrl": "http://127.0.0.1:5203/",
+    "browser": "headless Chromium",
+    "angle": "SwiftShader",
+    "viewport": [
+      640,
+      480
+    ]
+  },
+  "startedAt": "2026-11-08T14:48:35.199Z",
+  "tests": [
+    {
+      "name": "searching an empty registry is a controlled no-match",
+      "passed": true,
+      "details": {
+        "state": {
+          "ready": true,
+          "annotationCount": 0,
+          "registry": {
+            "size": 0,
+            "objects": []
+          }
+        },
+        "result": {
+          "annotationIds": [],
+          "matchCount": 0,
+          "status": "no-match",
+          "reason": "no annotation matches label \"sofa\""
+        }
+      }
+    },
+    {
+      "name": "cluster-fitted annotations are searchable with case/whitespace-insensitive labels",
+      "passed": true,
+      "details": {
+        "object": {
+          "objectId": "annotation-1",
+          "semanticLabel": "Sofa",
+          "attributes": {
+            "description": "test",
+            "obb": "cluster"
+          },
+          "worldObb": {
+            "position": {
+              "x": 0.8616581184003651,
+              "y": 0.7232327577327189,
+              "z": -0.3310264362549431
+            },
+            "quaternion": {
+              "isQuaternion": true,
+              "_x": 0.7233355061227175,
+              "_y": -0.13117268447468572,
+              "_z": -0.2610827673231076,
+              "_w": 0.6256318894020707
+            },
+            "size": {
+              "x": 1.7379146428557724,
+              "y": 1.445325307740376,
+              "z": 1.0319024677873028
+            }
+          }
+        },
+        "result": {
+          "annotationIds": [
+            "annotation-1"
+          ],
+          "matchCount": 1,
+          "status": "matched"
+        }
+      }
+    },
+    {
+      "name": "pin-only annotations are searchable with whitespace/punctuation normalization",
+      "passed": true,
+      "details": {
+        "result": {
+          "annotationIds": [
+            "annotation-2"
+          ],
+          "matchCount": 1,
+          "status": "matched"
+        },
+        "ambiguous": {
+          "annotationIds": [
+            "annotation-1",
+            "annotation-3"
+          ],
+          "matchCount": 2,
+          "status": "ambiguous",
+          "reason": "label \"sofa\" matched 2 annotations but \"one\" was requested"
+        }
+      }
+    },
+    {
+      "name": "attribute search and quantifier 'one' pass through the real registry",
+      "passed": true,
+      "details": {
+        "result": {
+          "annotationIds": [
+            "annotation-2",
+            "annotation-3"
+          ],
+          "matchCount": 2,
+          "status": "ambiguous",
+          "reason": "attributes \"{\\\"obb\\\":\\\"point\\\"}\" matched 2 annotations but \"one\" was requested"
+        },
+        "unique": {
+          "annotationIds": [
+            "annotation-2"
+          ],
+          "matchCount": 1,
+          "status": "matched"
+        }
+      }
+    },
+    {
+      "name": "synonym folding matches the Phase 0 registry labels",
+      "passed": true,
+      "details": {
+        "result": {
+          "annotationIds": [
+            "annotation-1",
+            "annotation-3",
+            "annotation-4"
+          ],
+          "matchCount": 3,
+          "status": "matched"
+        },
+        "symmetric": {
+          "annotationIds": [
+            "annotation-1",
+            "annotation-3",
+            "annotation-4"
+          ],
+          "matchCount": 3,
+          "status": "matched"
+        }
+      }
+    },
+    {
+      "name": "unmatched labels produce a no-match with a reason",
+      "passed": true,
+      "details": {
+        "result": {
+          "annotationIds": [],
+          "matchCount": 0,
+          "status": "no-match",
+          "reason": "no annotation matches label \"bed\""
+        }
+      }
+    },
+    {
+      "name": "invalid queries throw controlled TypeErrors",
+      "passed": true,
+      "details": {
+        "state": {
+          "ready": true,
+          "annotationCount": 4,
+          "registry": {
+            "size": 4,
+            "objects": [
+              {
+                "objectId": "annotation-1",
+                "semanticLabel": "Sofa",
+                "attributes": {
+                  "description": "test",
+                  "obb": "cluster"
+                },
+                "worldObb": {
+                  "position": {
+                    "x": 0.8616581184003651,
+                    "y": 0.7232327577327189,
+                    "z": -0.3310264362549431
+                  },
+                  "quaternion": {
+                    "isQuaternion": true,
+                    "_x": 0.7233355061227175,
+                    "_y": -0.13117268447468572,
+                    "_z": -0.2610827673231076,
+                    "_w": 0.6256318894020707
+                  },
+                  "size": {
+                    "x": 1.7379146428557724,
+                    "y": 1.445325307740376,
+                    "z": 1.0319024677873028
+                  }
+                }
+              },
+              {
+                "objectId": "annotation-2",
+                "semanticLabel": "Coffee   Table",
+                "attributes": {
+                  "obb": "point"
+                },
+                "worldObb": {
+                  "position": {
+                    "x": 0.2,
+                    "y": 0.4,
+                    "z": 0.2
+                  },
+                  "quaternion": {
+                    "isQuaternion": true,
+                    "_x": 0,
+                    "_y": 0,
+                    "_z": 0,
+                    "_w": 1
+                  },
+                  "size": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  }
+                }
+              },
+              {
+                "objectId": "annotation-3",
+                "semanticLabel": "Sofa!",
+                "attributes": {
+                  "obb": "point"
+                },
+                "worldObb": {
+                  "position": {
+                    "x": 0.2,
+                    "y": 0.4,
+                    "z": 0.2
+                  },
+                  "quaternion": {
+                    "isQuaternion": true,
+                    "_x": 0,
+                    "_y": 0,
+                    "_z": 0,
+                    "_w": 1
+                  },
+                  "size": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  }
+                }
+              },
+              {
+                "objectId": "annotation-4",
+                "semanticLabel": "Couch",
+                "attributes": {
+                  "obb": "point"
+                },
+                "worldObb": {
+                  "position": {
+                    "x": 0.2,
+                    "y": 0.4,
+                    "z": 0.2
+                  },
+                  "quaternion": {
+                    "isQuaternion": true,
+                    "_x": 0,
+                    "_y": 0,
+                    "_z": 0,
+                    "_w": 1
+                  },
+                  "size": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "expectedTests": [
+    "searching an empty registry is a controlled no-match",
+    "cluster-fitted annotations are searchable with case/whitespace-insensitive labels",
+    "pin-only annotations are searchable with whitespace/punctuation normalization",
+    "attribute search and quantifier 'one' pass through the real registry",
+    "synonym folding matches the Phase 0 registry labels",
+    "unmatched labels produce a no-match with a reason",
+    "invalid queries throw controlled TypeErrors"
+  ],
+  "missingTests": [],
+  "unexpectedTests": [],
+  "duplicateTests": [],
+  "viewer": {
+    "states": {
+      "afterCluster": {
+        "ready": true,
+        "annotationCount": 1,
+        "registry": {
+          "size": 1,
+          "objects": [
+            {
+              "objectId": "annotation-1",
+              "semanticLabel": "Sofa",
+              "attributes": {
+                "description": "test",
+                "obb": "cluster"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 0.8616581184003651,
+                  "y": 0.7232327577327189,
+                  "z": -0.3310264362549431
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0.7233355061227175,
+                  "_y": -0.13117268447468572,
+                  "_z": -0.2610827673231076,
+                  "_w": 0.6256318894020707
+                },
+                "size": {
+                  "x": 1.7379146428557724,
+                  "y": 1.445325307740376,
+                  "z": 1.0319024677873028
+                }
+              }
+            }
+          ]
+        }
+      },
+      "afterPinOnly": {
+        "ready": true,
+        "annotationCount": 3,
+        "registry": {
+          "size": 3,
+          "objects": [
+            {
+              "objectId": "annotation-1",
+              "semanticLabel": "Sofa",
+              "attributes": {
+                "description": "test",
+                "obb": "cluster"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 0.8616581184003651,
+                  "y": 0.7232327577327189,
+                  "z": -0.3310264362549431
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0.7233355061227175,
+                  "_y": -0.13117268447468572,
+                  "_z": -0.2610827673231076,
+                  "_w": 0.6256318894020707
+                },
+                "size": {
+                  "x": 1.7379146428557724,
+                  "y": 1.445325307740376,
+                  "z": 1.0319024677873028
+                }
+              }
+            },
+            {
+              "objectId": "annotation-2",
+              "semanticLabel": "Coffee   Table",
+              "attributes": {
+                "obb": "point"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 0.2,
+                  "y": 0.4,
+                  "z": 0.2
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0,
+                  "_y": 0,
+                  "_z": 0,
+                  "_w": 1
+                },
+                "size": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                }
+              }
+            },
+            {
+              "objectId": "annotation-3",
+              "semanticLabel": "Sofa!",
+              "attributes": {
+                "obb": "point"
+              },
+              "worldObb": {
+                "position": {
+                  "x": 0.2,
+                  "y": 0.4,
+                  "z": 0.2
+                },
+                "quaternion": {
+                  "isQuaternion": true,
+                  "_x": 0,
+                  "_y": 0,
+                  "_z": 0,
+                  "_w": 1
+                },
+                "size": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "searches": {
+      "caseInsensitive": {
+        "annotationIds": [
+          "annotation-1"
+        ],
+        "matchCount": 1,
+        "status": "matched"
+      },
+      "ambiguous": {
+        "annotationIds": [
+          "annotation-1",
+          "annotation-3"
+        ],
+        "matchCount": 2,
+        "status": "ambiguous",
+        "reason": "label \"sofa\" matched 2 annotations but \"one\" was requested"
+      },
+      "attribute": {
+        "annotationIds": [
+          "annotation-2",
+          "annotation-3"
+        ],
+        "matchCount": 2,
+        "status": "ambiguous",
+        "reason": "attributes \"{\\\"obb\\\":\\\"point\\\"}\" matched 2 annotations but \"one\" was requested"
+      },
+      "synonym": {
+        "annotationIds": [
+          "annotation-1",
+          "annotation-3",
+          "annotation-4"
+        ],
+        "matchCount": 3,
+        "status": "matched"
+      }
+    }
+  },
+  "consoleMessages": [
+    {
+      "page": "http://127.0.0.1:5203/",
+      "type": "debug",
+      "text": "[vite] connecting..."
+    },
+    {
+      "page": "http://127.0.0.1:5203/",
+      "type": "warning",
+      "text": "[.WebGL-0x13c0083cc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "page": "http://127.0.0.1:5203/",
+      "type": "warning",
+      "text": "[.WebGL-0x13c0083cc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "page": "http://127.0.0.1:5203/",
+      "type": "warning",
+      "text": "[.WebGL-0x13c0083cc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+    },
+    {
+      "page": "http://127.0.0.1:5203/",
+      "type": "warning",
+      "text": "[.WebGL-0x13c0083cc00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+    },
+    {
+      "page": "http://127.0.0.1:5203/",
+      "type": "debug",
+      "text": "[vite] connected."
+    },
+    {
+      "page": "http://127.0.0.1:5203/",
+      "type": "log",
+      "text": "[cluster-debug] Sofa {box: Array(4), sampledRayHits: 196, clusterPoints: 142, clusterDims: Object, centroid: Array(3)}"
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": []
+}

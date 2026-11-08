@@ -1,4 +1,4 @@
-import { cloneObb, OBB } from "./obb";
+import { cloneObb, OBB } from "./obb.ts";
 
 export type SpatialObjectId = string;
 export type SpatialObjectAttributeValue = string | number | boolean | null;

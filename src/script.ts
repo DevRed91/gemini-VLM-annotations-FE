@@ -16,6 +16,8 @@ import {
 import { HoverTint, OBB } from "./utils/hoverTint";
 import { fitOBB, obbWorldToLocal } from "./utils/obbFit";
 import { SpatialObjectRegistry } from "./utils/spatialObjectRegistry";
+import { searchObjects } from "./spatial/ObjectMatcher";
+import type { SearchOptions, SearchQuery } from "./spatial/types";
 import GeometricContextManager from "./GeometricContextManager/GeometricContextManager";
 import { GaussianObjectHighlighter } from "./utils/gaussianObjectHighlighter";
 import { defaultGaussianMaskColor } from "./utils/gaussianMaskManager";
@@ -896,6 +898,18 @@ if (import.meta.env.DEV) {
       return registry ? { size: registry.size, objects: registry.list() } : null;
     },
     get spatialRegistry() { return (viewer as any).spatialRegistry; },
+    /**
+     * Phase 1 local object search (DEV-only seam): runs the deterministic
+     * label/attribute matcher (src/spatial/ObjectMatcher.ts) over the current
+     * per-world registry. No Gemini, no viewer state changes. Returns null
+     * between worlds; otherwise the SearchResult contract of
+     * src/spatial/types.ts (see docs/chat-object-search-phase-1-matching.md).
+     */
+    search(query: SearchQuery, options?: SearchOptions) {
+      const registry: SpatialObjectRegistry | null = (viewer as any).spatialRegistry;
+      if (!registry) return null;
+      return searchObjects(registry.list(), query, options);
+    },
     get shaderErrors() { return [...(viewer as any).shaderErrors]; },
     glError() { return (viewer as any).renderer.getContext().getError(); },
     capture() {
