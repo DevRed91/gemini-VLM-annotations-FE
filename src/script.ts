@@ -33,6 +33,11 @@ import { ChatPanel } from "./chat/ChatPanel";
 import { ChatAnnotationSelection } from "./viewer/ChatAnnotationSelection";
 import { deriveSearchAttributes } from "./chat/LocalQueryParser";
 import GeometricContextManager from "./GeometricContextManager/GeometricContextManager";
+import type { DBSCANClusterReport } from "./GeometricContextManager/GeometricContextManager";
+import { AnnotationDiagnostics } from "./diagnostics/AnnotationDiagnostics";
+import type { DetectionRecorder } from "./diagnostics/AnnotationDiagnostics";
+import type { SampleCellProbe } from "./diagnostics/records";
+import type { NormalizedBox } from "./diagnostics/types";
 import { GaussianObjectHighlighter } from "./utils/gaussianObjectHighlighter";
 import { defaultGaussianMaskColor } from "./utils/gaussianMaskManager";
 import { isNonLodSplat } from "./utils/gaussianIndexSupport";
@@ -60,6 +65,22 @@ function buildAnnotateEndpoint(baseUrl: string): string {
     return `${normalized}/api/annotate`;
   }
   return `${normalized}/annotate`;
+}
+
+/**
+ * Screen-space sample-grid resolution for a sanitized detection box.
+ * Unchanged production formula (was inline in samplePointsFromBox); extracted
+ * so the dev diagnostics can report the same value the sampler used.
+ */
+function computeSampleGridSize(box: AnnotationDetection["box"], nonLod: boolean): number {
+  const [ymin, xmin, ymax, xmax] = box;
+  const area = (xmax - xmin) * (ymax - ymin);
+  const minGridSize = 6;
+  const maxGridSize = nonLod ? 25 : 6;
+  return Math.max(
+    minGridSize,
+    Math.min(maxGridSize, Math.round(minGridSize + (maxGridSize - minGridSize) * Math.sqrt(area))),
+  );
 }
 
 interface AnnotationDetection {
@@ -114,6 +135,12 @@ export class SplatViewer {
    */
   private spatialRegistry: SpatialObjectRegistry | null = null;
   private annotationMetadataStore: SceneAnnotationMetadataStore | null = null;
+  /**
+   * Task 1 development-only pipeline diagnostics (dev builds only). Null in
+   * production, so every stage call below is skipped. Never feeds back into
+   * the annotation pipeline; see src/diagnostics/AnnotationDiagnostics.ts.
+   */
+  private annotationDiagnostics: AnnotationDiagnostics | null = null;
   private chatController: ChatController | null = null;
   private readonly chatAnnotationSelection = new ChatAnnotationSelection();
   private cameraOrientTarget: THREE.Quaternion | null = null;
@@ -162,6 +189,9 @@ export class SplatViewer {
 
     this.spark = new SparkRenderer({ renderer: this.renderer });
     this.scene.add(this.spark);
+    if (import.meta.env.DEV) {
+      this.annotationDiagnostics = new AnnotationDiagnostics(this.scene);
+    }
     this.cube = this.addBox();
     this.addGroundPlane();
     // Transform, scale, and rotation gizmo disabled for now.
@@ -255,10 +285,21 @@ export class SplatViewer {
       const rect = this.renderer.domElement.getBoundingClientRect();
       const x = (e.clientX - rect.left) / rect.width;
       const y = (e.clientY - rect.top) / rect.height;
-      const clickWorldPos = this.getAnnotationPosition(x, y);
+      const clickCast = this.splatRay(x, y);
+      const clickWorldPos = clickCast?.intersection?.point ?? null;
 
       console.log(`User clicked at: x=${x.toFixed(2)}, y=${y.toFixed(2)}`);
-      
+      this.annotationDiagnostics?.recordClick({
+        normalizedX: x,
+        normalizedY: y,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        cameraPosition: this.camera.getWorldPosition(new THREE.Vector3()),
+        cameraQuaternion: this.camera.getWorldQuaternion(new THREE.Quaternion()),
+        ray: clickCast?.ray ?? null,
+        intersection: clickCast?.intersection ?? null,
+      });
+
       // Trigger the new coordinate-based request
       this.requestAnnotationFromGemini(x, y, clickWorldPos);
     });
@@ -433,6 +474,8 @@ export class SplatViewer {
     this.chatController?.inventoryChanged();
     annotation.element.remove();
     this.apartments = this.apartments.filter((item) => item.id !== annotation.apartmentId);
+    // Dev diagnostics: drop this annotation's 3D diagnostic objects (records stay).
+    this.annotationDiagnostics?.detachAnnotation(annotation.apartmentId);
     if (annotation.helper) {
       annotation.helper.removeFromParent();
       annotation.helper.geometry.dispose();
@@ -453,6 +496,8 @@ export class SplatViewer {
 
   private clearWorldResources(): void {
     this.clearChatSelection();
+    // Dev diagnostics: worlds never share records or visualization objects.
+    this.annotationDiagnostics?.clear();
     // Annotations unregister (while the registry is still alive) one by one,
     // then the per-world registry itself is dropped with the world. Persisted
     // records stay scene-keyed so the same scene can be restored on reload.
@@ -605,10 +650,14 @@ export class SplatViewer {
       throw error;
     }
   }
-  private getAnnotationPosition(
+  /**
+   * Core splat raycast shared by the click path and box sampling. Returns the
+   * camera ray plus the nearest intersection, or null when no splat is loaded.
+   */
+  private splatRay(
     normalizedX: number,
     normalizedY: number,
-  ): THREE.Vector3 | null {
+  ): { ray: THREE.Ray; intersection: THREE.Intersection | null } | null {
     // 1. Convert normalized 0-1 to NDC (-1 to 1)
     const ndcX = normalizedX * 2 - 1;
     const ndcY = -(normalizedY * 2 - 1);
@@ -619,11 +668,19 @@ export class SplatViewer {
     // 2. Intersect with the SplatMesh
     if (this.currentSplat) {
       const intersects = raycaster.intersectObject(this.currentSplat);
-      if (intersects.length > 0) {
-        return intersects[0].point; // This is your 3D position
-      }
+      return {
+        ray: raycaster.ray,
+        intersection: intersects.length > 0 ? intersects[0] : null,
+      };
     }
     return null;
+  }
+
+  private getAnnotationPosition(
+    normalizedX: number,
+    normalizedY: number,
+  ): THREE.Vector3 | null {
+    return this.splatRay(normalizedX, normalizedY)?.intersection?.point ?? null;
   }
   // Create a simple UI helper function
   // private createAnnotationElement(position: THREE.Vector3, label: string) {
@@ -914,22 +971,31 @@ export class SplatViewer {
   }
 
   /** Sample world-space ray hits; WebGL depth readback is deliberately avoided. */
-  private samplePointsFromBox(box: AnnotationDetection["box"]): THREE.Vector3[] {
+  private samplePointsFromBox(
+    box: AnnotationDetection["box"],
+    probes?: SampleCellProbe[],
+  ): THREE.Vector3[] {
     const [ymin, xmin, ymax, xmax] = box;
-    const area = (xmax - xmin) * (ymax - ymin);
     const nonLod = this.currentSplat ? isNonLodSplat(this.currentSplat) : false;
-    const minGridSize = 6;
-    const maxGridSize = nonLod ? 25 : 6;
-    const gridSize = Math.max(
-      minGridSize,
-      Math.min(maxGridSize, Math.round(minGridSize + (maxGridSize - minGridSize) * Math.sqrt(area))),
-    );
+    const gridSize = computeSampleGridSize(box, nonLod);
     const points: THREE.Vector3[] = [];
     for (let row = 0; row < gridSize; row++) {
       for (let col = 0; col < gridSize; col++) {
         const x = xmin + ((col + 0.5) / gridSize) * (xmax - xmin);
         const y = ymin + ((row + 0.5) / gridSize) * (ymax - ymin);
-        const point = this.getAnnotationPosition(x, y);
+        const cast = this.splatRay(x, y);
+        if (probes) {
+          probes.push({
+            row,
+            col,
+            normalizedX: x,
+            normalizedY: y,
+            rayOrigin: cast ? cast.ray.origin.clone() : null,
+            rayDirection: cast ? cast.ray.direction.clone() : null,
+            intersection: cast?.intersection ?? null,
+          });
+        }
+        const point = cast?.intersection?.point;
         if (point) points.push(point);
       }
     }
@@ -941,9 +1007,29 @@ export class SplatViewer {
     clickWorldPosAtClick: THREE.Vector3 | null,
   ): Promise<ViewerAnnotation | null> {
     const generation = this.worldGeneration;
+    const diagnostics = this.annotationDiagnostics;
+    // Every stage of runDetectionPipeline reports into the recorder (dev only).
+    const recorder = diagnostics?.beginDetection(detection) ?? null;
+    try {
+      return await this.runDetectionPipeline(detection, clickWorldPosAtClick, recorder, generation);
+    } finally {
+      if (recorder) diagnostics?.endDetection(recorder);
+    }
+  }
+
+  private async runDetectionPipeline(
+    detection: AnnotationDetection,
+    clickWorldPosAtClick: THREE.Vector3 | null,
+    recorder: DetectionRecorder | null,
+    generation: number,
+  ): Promise<ViewerAnnotation | null> {
     const splat = this.currentSplat;
-    if (!splat || !this.splatLoaded) return null;
+    if (!splat || !this.splatLoaded) {
+      recorder?.failure("world", "no splat loaded");
+      return null;
+    }
     const box = this.sanitizeDetectionBox(detection.box);
+    recorder?.sanitize(box as NormalizedBox | null);
     if (!box) {
       console.warn("Discarding invalid or tiny detection bounding box.", detection.box);
       return null;
@@ -951,14 +1037,31 @@ export class SplatViewer {
 
     const metadata = parseAnnotationMetadata(detection.metadata);
     const semanticDescription = detection.description ?? metadata?.description;
-    const sampledPoints = this.samplePointsFromBox(box);
+    const nonLod = isNonLodSplat(splat);
+    const probes: SampleCellProbe[] | undefined = this.annotationDiagnostics ? [] : undefined;
+    const sampledPoints = this.samplePointsFromBox(box, probes);
+    recorder?.sampling(computeSampleGridSize(box, nonLod), probes ?? []);
+    const dbscanParams = { eps: 0.3, minPts: nonLod ? 10 : 4 };
+    let clusterReport: DBSCANClusterReport | null = null;
     const measured = this.geometricContext.registerAndMeasureObject(
       detection.label,
       sampledPoints,
-      { eps: 0.3, minPts: isNonLodSplat(splat) ? 10 : 4 },
+      {
+        ...dbscanParams,
+        ...(recorder
+          ? {
+              onClusters: (report: DBSCANClusterReport) => {
+                clusterReport = report;
+              },
+            }
+          : {}),
+      },
     );
+    recorder?.clustering(sampledPoints, clusterReport, dbscanParams);
     if (measured) {
+      recorder?.measurement(measured);
       const fit = fitOBB(measured.points);
+      if (fit) recorder?.obb(fit);
       const fmt = (v: number) => Number(v.toFixed(3));
       console.log(`[cluster-debug] ${detection.label}`, {
         box,
@@ -981,6 +1084,10 @@ export class SplatViewer {
         const selection = owner
           ? await owner.select(fit.obb, { minOpacity: 0.05 })
           : null;
+        recorder?.lift(
+          selection,
+          owner ? null : "Gaussian highlighter disabled (ENABLE_GAUSSIAN_HIGHLIGHTING off)",
+        );
         if (selection) {
           console.log(`[cluster-debug] ${detection.label} lift`, {
             selected: selection.selectedIds.length,
@@ -989,8 +1096,14 @@ export class SplatViewer {
             opacityRejected: selection.lift.opacityRejected,
           });
         }
-        if (owner && (!selection || generation !== this.worldGeneration)) return null;
-        if (generation !== this.worldGeneration || this.currentSplat !== splat) return null;
+        if (owner && (!selection || generation !== this.worldGeneration)) {
+          recorder?.failure("lift", "selection invalidated before commit (world changed or cleared)");
+          return null;
+        }
+        if (generation !== this.worldGeneration || this.currentSplat !== splat) {
+          recorder?.failure("lift", "world changed during lift; annotation aborted");
+          return null;
+        }
 
         const annotation = this.createAnnotationElement(
           measured.centroid,
@@ -1005,6 +1118,8 @@ export class SplatViewer {
             selectionId: selection?.objectId,
           },
         );
+        recorder?.anchor(measured.centroid, "cluster-centroid");
+        recorder?.attach(annotation.apartmentId);
         this.lastClusterFit = {
           world: new OBB(fit.obb),
           local,
@@ -1014,6 +1129,7 @@ export class SplatViewer {
         };
         return annotation;
       }
+      recorder?.failure("obb", "fitOBB returned null");
     }
 
     const fallbackPosition = clickWorldPosAtClick ?? this.getAnnotationPosition(
@@ -1022,12 +1138,19 @@ export class SplatViewer {
     );
     if (!fallbackPosition) {
       console.warn(`Lifting failed for ${detection.label}`);
+      recorder?.failure("anchor", "no fallback position (no click hit, box-centre raycast missed)");
       return null;
     }
-    return this.createAnnotationElement(fallbackPosition, detection.label, {
+    recorder?.anchor(
+      fallbackPosition,
+      clickWorldPosAtClick ? "click-hit" : "box-centre-raycast",
+    );
+    const annotation = this.createAnnotationElement(fallbackPosition, detection.label, {
       description: semanticDescription,
       metadata,
     });
+    recorder?.attach(annotation.apartmentId);
+    return annotation;
   }
 
 private async captureSnapshot(): Promise<string> {
@@ -1083,7 +1206,9 @@ private async captureSnapshot(): Promise<string> {
     const generation = this.worldGeneration;
     try {
       this.setAnnotationLoading(true);
+      this.annotationDiagnostics?.beginRequest("click", generation);
       const dataUrl = await this.captureSnapshot();
+      this.annotationDiagnostics?.recordSnapshot(dataUrl);
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (BYPASS_TUNNEL_REMINDER) headers["bypass-tunnel-reminder"] = "true";
 
@@ -1099,6 +1224,7 @@ private async captureSnapshot(): Promise<string> {
 
       if (!response.ok) throw new Error("Server error");
       const data = await response.json();
+      this.annotationDiagnostics?.recordResponse(data);
       const detections: AnnotationDetection[] = Array.isArray(data)
         ? data
         : Array.isArray(data?.objects)
@@ -1116,6 +1242,7 @@ private async captureSnapshot(): Promise<string> {
     } catch (err) {
       if (generation === this.worldGeneration) console.error("Museum Mode Error:", err);
     } finally {
+      this.annotationDiagnostics?.closeRequest();
       if (generation === this.worldGeneration) this.setAnnotationLoading(false);
     }
   }
@@ -1152,6 +1279,12 @@ if (import.meta.env.DEV) {
     },
     get spatialRegistry() { return (viewer as any).spatialRegistry; },
     get chatSelection() { return viewer.getChatSelection(); },
+    /**
+     * Task 1 development-only pipeline diagnostics (see
+     * src/diagnostics/AnnotationDiagnostics.ts). Use last()/list() for the
+     * structured per-request records, toggle()/toggleOverlay() for visibility.
+     */
+    get diagnostics() { return (viewer as any).annotationDiagnostics ?? null; },
     /**
      * Phase 1 local object search (DEV-only seam): runs the deterministic
      * label/attribute matcher (src/spatial/ObjectMatcher.ts) over the current
