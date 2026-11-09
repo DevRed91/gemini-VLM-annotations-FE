@@ -2,14 +2,13 @@ import { DIAGNOSTIC_CSS_COLORS, colorCss } from "./clusterPalette.ts";
 import type { AnnotationRequestDiagnostics, DetectionDiagnostics, Vec3Record } from "./types.ts";
 
 /**
- * Development-only screen-space overlay (Task 1 instrumentation).
+ * Development-only screen-space renderer (Task 1 instrumentation).
  *
- * Renders a frozen copy of the frame that was sent to Gemini, with the raw
- * and sanitized detection boxes, the screen-space sample grid (hits/misses),
- * the click position, and a legend listing every DBSCAN cluster with its size
- * and centroid. The overlay is a plain 2D canvas above the WebGL canvas with
- * pointer-events disabled; it never affects interaction.
+ * Draws the sanitized detection boxes on a transparent canvas. Detailed
+ * diagnostic UI remains available in this module but is hidden in the viewer.
  */
+const SHOW_FULL_DIAGNOSTICS_OVERLAY = false;
+
 export class DiagnosticOverlay {
   readonly canvas: HTMLCanvasElement;
   private readonly context: CanvasRenderingContext2D;
@@ -68,7 +67,9 @@ export class DiagnosticOverlay {
   async render(request: AnnotationRequestDiagnostics): Promise<void> {
     this.lastRequest = request;
     const token = ++this.renderToken;
-    const image = await this.loadImage(request.snapshotDataUrl);
+    const image = SHOW_FULL_DIAGNOSTICS_OVERLAY
+      ? await this.loadImage(request.snapshotDataUrl)
+      : null;
     // A newer render superseded this one while the image decoded.
     if (token !== this.renderToken) return;
     this.draw(request, image);
@@ -90,6 +91,15 @@ export class DiagnosticOverlay {
     const width = window.innerWidth;
     const height = window.innerHeight;
     ctx.clearRect(0, 0, width, height);
+
+    if (!SHOW_FULL_DIAGNOSTICS_OVERLAY) {
+      request.detections.forEach((record) => {
+        if (record.sanitizedBox) {
+          this.strokeBox(record.sanitizedBox, width, height, DIAGNOSTIC_CSS_COLORS.sanitizedBox, 2);
+        }
+      });
+      return;
+    }
 
     if (image) {
       // Frozen Gemini view, dimmed so overlays stay readable.

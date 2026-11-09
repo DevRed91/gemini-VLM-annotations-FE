@@ -580,6 +580,7 @@ export class SplatViewer {
       const selected = this.chatAnnotationSelection.has(annotation.apartmentId);
       annotation.element.classList.toggle("annotation-container--chat-selected", selected);
       if (!annotation.helper) continue;
+      annotation.helper.visible = selected;
 
       if (!annotation.helperBaseColor) {
         const material = annotation.helper.material as THREE.LineBasicMaterial;
