@@ -5,8 +5,9 @@
 //  C) browser validation against the real viewer via the DEV `window.__sl`
 //     seam and its deterministic `inject()` path (no Gemini required):
 //     full per-stage records, distinct cluster colours, 3D groups + overlay,
-//     keyboard toggles, and cleanup on annotation removal / clear-all /
-//     world reload.
+//     keyboard toggles, cleanup on annotation removal / clear-all /
+//     world reload, and Task 2.1C coordinate validation (click-time camera
+//     snapshot, reprojection API, validation panel).
 // Writes docs/annotation-diagnostics-results.json.
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
@@ -23,12 +24,20 @@ const sourceChecks = [
   ["script.ts", /Math\.min\(1, Math\.max\(0, value\)\)/, "sanitize clamps boxes to [0,1] as before"],
   ["script.ts", /< 0\.02/, "sanitize keeps the 0.02 minimum box size"],
   ["script.ts", /minGridSize = 6;[\s\S]*maxGridSize = nonLod \? 25 : 6;/, "sample-grid formula unchanged (6..25 non-LOD / 6 LOD)"],
-  ["script.ts", /if \(import\.meta\.env\.DEV\) \{\s*\n\s*this\.annotationDiagnostics = new AnnotationDiagnostics\(this\.scene\);/, "diagnostics constructed only in DEV builds"],
+  ["script.ts", /if \(import\.meta\.env\.DEV\) \{[\s\S]*?this\.annotationDiagnostics = new AnnotationDiagnostics\(\s*this\.scene,\s*this\.camera,\s*this\.renderer\.domElement,\s*\);/, "diagnostics constructed only in DEV builds (with camera+canvas for Task 2.1C snapshots)"],
   ["script.ts", /this\.annotationDiagnostics\?\.detachAnnotation\(annotation\.apartmentId\);/, "per-annotation diagnostic cleanup wired"],
-  ["script.ts", /this\.annotationDiagnostics\?\.clear\(\);/, "world-clear diagnostic cleanup wired"],
+  ["script.ts", /this\.annotationDiagnostics\?\.clear\(\);\s*\n\s*this\.annotationDiagnostics\?\.setSplat\(null\);/, "world-clear diagnostic cleanup and splat untracking wired"],
+  ["script.ts", /this\.annotationDiagnostics\?\.setSplat\(splat\);/, "splat transform tracking wired for click-time snapshots"],
   ["GeometricContextManager.ts", /current\.length > previous\.length \? current : previous/, "largest-cluster selection logic unchanged"],
   ["GeometricContextManager.ts", /if \(options\.onClusters\) \{/, "DBSCAN collector is opt-in and inert by default"],
+  ["AnnotationDiagnostics.ts", /cameraSnapshot:[\s\S]*?captureSnapshot\(this\.camera, this\.canvas, this\.splat\)/, "click-time full camera/viewport/splat snapshot captured in recordClick"],
+  ["AnnotationDiagnostics.ts", /validateReprojection\(requestIndex\?\: number\): ClickValidationResult/, "console validation API present (validateReprojection)"],
 ];
+const sourceFilePaths = {
+  "script.ts": "script.ts",
+  "GeometricContextManager.ts": "GeometricContextManager/GeometricContextManager.ts",
+  "AnnotationDiagnostics.ts": "diagnostics/AnnotationDiagnostics.ts",
+};
 const expectedTests = [
   "diagnostics seam is available and enabled in DEV",
   "deterministic inject records every pipeline stage",
@@ -40,6 +49,8 @@ const expectedTests = [
   "click-path request with a mocked Gemini response records the click and response stages",
   "reloading a world clears records and visuals",
   "production annotation behaviour is preserved",
+  "coordinate validation replays the click and sampling hits through the click-time camera",
+  "the coordinate validation panel opens, lists requests, and leaves annotations untouched",
 ];
 let server;
 let browser;
@@ -65,7 +76,7 @@ async function waitForServer(url) {
 async function runSourceChecks() {
   const results = [];
   for (const [file, pattern, description] of sourceChecks) {
-    const content = fs.readFileSync(path.join(root, "src", file === "script.ts" ? "script.ts" : `GeometricContextManager/GeometricContextManager.ts`), "utf8");
+    const content = fs.readFileSync(path.join(root, "src", sourceFilePaths[file]), "utf8");
     const passed = pattern.test(content);
     results.push({ file, description, passed });
     console.log(`${passed ? "PASS" : "FAIL"} source check: ${description} (${file})`);
@@ -81,7 +92,7 @@ async function runBundleCheck() {
     build.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`vite build exited with ${code}`))));
   });
   const bundles = fs.readdirSync(path.join(root, "dist/assets")).filter((name) => name.endsWith(".js"));
-  const forbidden = ["DiagnosticOverlay", "buildDetectionGroup", "clusterColor(", "AnnotationDiagnostics(", "detachAnnotationGroup"];
+  const forbidden = ["DiagnosticOverlay", "buildDetectionGroup", "clusterColor(", "AnnotationDiagnostics(", "detachAnnotationGroup", "validateReprojection", "CoordinateValidationPanel", "coordinate-validation"];
   const hits = [];
   for (const bundle of bundles) {
     const content = fs.readFileSync(path.join(root, "dist/assets", bundle), "utf8");
@@ -425,6 +436,17 @@ try {
     assert(state.registry.objects.some((object) => object.objectId === record.annotationId),
       "click-path annotation must be registered under its record's ID");
     assert(state.diagnostics.liveGroupCount >= 2, "click request group plus detection group must be live");
+    // Task 2.1C: the click record must freeze the full camera snapshot.
+    const snapshot = last.click.cameraSnapshot;
+    assert(snapshot, "click record must carry a click-time camera snapshot");
+    assert(snapshot.camera.projectionMatrix.length === 16, "snapshot must record the 4x4 projection matrix");
+    assert(snapshot.camera.inverseWorldMatrix.length === 16, "snapshot must record the 4x4 inverse world matrix");
+    assert(snapshot.camera.isPerspective === true && typeof snapshot.camera.fov === "number",
+      "snapshot must record the perspective parameters");
+    assert(snapshot.viewport.rectWidth > 0 && snapshot.viewport.rectHeight > 0 && snapshot.viewport.devicePixelRatio > 0,
+      "snapshot must record the viewport geometry");
+    assert(snapshot.splat && Math.abs(snapshot.splat.position.y - -1.5) < 1e-6,
+      "snapshot must record the splat world transform (position y -1.5)");
     evidence.states.clickPath = last;
     return {
       clickHit: last.click.hit,
@@ -433,6 +455,101 @@ try {
       clusters: record.clustering.clusters.map((cluster) => cluster.size),
       anchor: record.anchor,
     };
+  });
+
+  await viewerTest(expectedTests[10], async () => {
+    // The click-path request is the latest record; replay it through the
+    // frozen click-time camera (never the live one).
+    const validation = await page.evaluate(() => {
+      const diagnostics = window.__sl.diagnostics;
+      return {
+        click: diagnostics.validateReprojection(),
+        samples: diagnostics.validateSamples(),
+        report: diagnostics.exportValidation(),
+      };
+    });
+    assert(validation.click.status === "ok", `click validation failed: ${validation.click.reason}`);
+    assert(validation.click.cameraSource === "click-snapshot", "must project with the click-time snapshot");
+    assert(validation.click.errors, "click validation must produce errors");
+    assert(validation.click.errors.normalized < 0.005,
+      `click-hit reprojection error too large: ${validation.click.errors.normalized}`);
+    assert(validation.click.errors.pixels < 5,
+      `click-hit pixel error too large: ${validation.click.errors.pixels}`);
+    assert(validation.click.spaceHypothesis?.verdict === "consistent-with-world",
+      `unexpected space verdict: ${validation.click.spaceHypothesis?.verdict}`);
+    assert((validation.click.rayConsistency?.offset ?? 1) < 1e-3,
+      "recorded hit must lie on its own recorded ray");
+    assert(validation.samples.status === "ok", `sample validation failed: ${validation.samples.reason}`);
+    assert(validation.samples.hitCells > 0, "expected sampling hits");
+    assert(validation.samples.projectedCells === validation.samples.hitCells,
+      "every hit cell must project (all raycast hits are in front of the camera)");
+    assert(validation.samples.behindCameraCells === 0, "no forward raycast hit can be behind the camera");
+    assert(validation.samples.normalizedErrorStats && validation.samples.normalizedErrorStats.max < 0.005,
+      `sampling reprojection errors too large: ${JSON.stringify(validation.samples.normalizedErrorStats)}`);
+    assert(validation.samples.pixelErrorStats && validation.samples.pixelErrorStats.count === validation.samples.hitCells,
+      "pixel stats must cover every projected hit");
+    assert(validation.report && validation.report.coordinateSpaces && validation.report.splatAnalysis,
+      "exported report must be self-describing");
+    assert(JSON.stringify(validation.report.clickValidation) === JSON.stringify(validation.click),
+      "report must embed the same click validation");
+    evidence.states.coordinateValidation = {
+      click: validation.click,
+      samples: {
+        totalCells: validation.samples.totalCells,
+        hitCells: validation.samples.hitCells,
+        projectedCells: validation.samples.projectedCells,
+        normalizedErrorStats: validation.samples.normalizedErrorStats,
+      },
+      splatAnalysis: validation.report.splatAnalysis,
+    };
+    return {
+      clickError: validation.click.errors,
+      clickVerdict: validation.click.spaceHypothesis.verdict,
+      hitCells: validation.samples.hitCells,
+      maxNormalizedError: validation.samples.normalizedErrorStats?.max,
+      sparkRaycastWorldSpaceSafe: validation.report.splatAnalysis.sparkRaycastWorldSpaceSafe,
+    };
+  });
+
+  await viewerTest(expectedTests[11], async () => {
+    const before = await diagnosticsState(page);
+    const panelProbe = await page.evaluate(() => {
+      const diagnostics = window.__sl.diagnostics;
+      const shown = diagnostics.toggleValidationPanel();
+      const panel = document.getElementById("coordinate-validation-panel");
+      const overlay = document.getElementById("coordinate-validation-overlay");
+      const options = panel ? [...panel.querySelectorAll("select option")] : [];
+      const buttons = panel ? [...panel.querySelectorAll("button")].map((node) => node.textContent) : [];
+      const visibleAfterSecondToggle = diagnostics.toggleValidationPanel();
+      return {
+        shown,
+        visibleAfterSecondToggle,
+        panelExists: Boolean(panel),
+        overlayExists: Boolean(overlay),
+        requestOptions: options.length,
+        buttonLabels: buttons,
+      };
+    });
+    assert(panelProbe.shown === true, "toggleValidationPanel() must show the panel");
+    assert(panelProbe.visibleAfterSecondToggle === false, "second toggle must hide the panel");
+    assert(panelProbe.panelExists, "panel DOM node must exist");
+    assert(panelProbe.overlayExists, "validation overlay canvas must exist");
+    assert(panelProbe.requestOptions >= 4, "panel must list the recorded requests");
+    for (const label of ["Validate Click-Hit Reprojection", "Validate All Sampling Hits", "Export JSON"]) {
+      assert(panelProbe.buttonLabels.includes(label), `panel must offer the "${label}" action`);
+    }
+    // The V keyboard shortcut toggles the panel.
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "v" })));
+    const shownByKeyboard = await page.evaluate(() =>
+      document.getElementById("coordinate-validation-panel").style.display !== "none");
+    assert(shownByKeyboard, "V must show the panel");
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "v" })));
+    // Toggling the panel must not touch annotation or diagnostic state.
+    const after = await diagnosticsState(page);
+    assert(after.annotationCount === before.annotationCount, "panel must not change annotations");
+    assert(after.diagnostics.requestCount === before.diagnostics.requestCount, "panel must not change records");
+    assert(after.diagnostics.liveGroupCount === before.diagnostics.liveGroupCount, "panel must not change visuals");
+    return panelProbe;
   });
 
   await viewerTest(expectedTests[8], async () => {

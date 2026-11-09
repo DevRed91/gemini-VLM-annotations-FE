@@ -23,6 +23,20 @@ import {
   vec3,
   type SampleCellProbe,
 } from "./records.ts";
+import {
+  buildValidationReport,
+  captureCameraState,
+  captureSplatTransform,
+  captureSnapshot,
+  captureViewport,
+  validateClickReprojection,
+  validateSampleReprojections,
+  type ClickValidationResult,
+  type LiveCapture,
+  type SamplesValidationResult,
+  type ValidationReport,
+} from "./coordinateValidation.ts";
+import { CoordinateValidationPanel } from "./validationPanel.ts";
 import type {
   AnchorSource,
   AnnotationRequestDiagnostics,
@@ -71,11 +85,33 @@ export class AnnotationDiagnostics {
   private liveRequests = new WeakSet<AnnotationRequestDiagnostics>();
   private enabled = true;
   private overlayVisible = true;
+  /**
+   * Task 2.1C: live viewer references used to freeze full camera/viewport
+   * state at click time and to capture validation-time state. Null only in
+   * headless/legacy constructions; validation then reports the limitation.
+   */
+  private readonly camera: THREE.Camera | null;
+  private readonly canvas: HTMLCanvasElement | null;
+  private splat: THREE.Object3D | null = null;
+  private readonly validationPanel: CoordinateValidationPanel | null;
+  private keyboardHandler: (event: KeyboardEvent) => void = () => {};
 
-  constructor(scene: THREE.Scene) {
+  constructor(
+    scene: THREE.Scene,
+    camera: THREE.Camera | null = null,
+    canvas: HTMLCanvasElement | null = null,
+  ) {
     this.root.name = "annotation-diagnostics";
     scene.add(this.root);
+    this.camera = camera;
+    this.canvas = canvas;
     this.attachKeyboard();
+    // The panel needs live captures; without camera+canvas it stays absent
+    // and the console validation API reports the missing snapshot instead.
+    this.validationPanel =
+      camera && canvas && typeof document !== "undefined"
+        ? new CoordinateValidationPanel(this)
+        : null;
   }
 
   // ------------------------------------------------------------------
@@ -101,7 +137,19 @@ export class AnnotationDiagnostics {
       hit: probe.intersection
         ? { position: vec3(probe.intersection.point), distance: probe.intersection.distance }
         : null,
+      // Task 2.1C: freeze the full click-time camera/viewport/splat state.
+      // Captured synchronously here, in the same event turn as the click
+      // probe, and never overwritten afterwards.
+      cameraSnapshot:
+        this.camera && this.canvas
+          ? captureSnapshot(this.camera, this.canvas, this.splat)
+          : null,
     };
+  }
+
+  /** Track the current splat so click snapshots can freeze its world transform. */
+  setSplat(splat: THREE.Object3D | null): void {
+    this.splat = splat;
   }
 
   /** Begin a request (one click → one Gemini call → N detections). */
@@ -195,6 +243,14 @@ export class AnnotationDiagnostics {
     this.currentRequest = null;
     this.pendingClick = null;
     this.overlay.clear();
+    this.validationPanel?.onRecordsChanged();
+  }
+
+  /** Release every listener and DOM node (dev page teardown). */
+  dispose(): void {
+    window.removeEventListener("keydown", this.keyboardHandler);
+    this.validationPanel?.dispose();
+    this.clear();
   }
 
   // ------------------------------------------------------------------
@@ -269,11 +325,97 @@ export class AnnotationDiagnostics {
   }
 
   // ------------------------------------------------------------------
+  // Coordinate validation (Task 2.1C, Feature F console API)
+  // ------------------------------------------------------------------
+
+  /**
+   * Freeze the current (validation-time) camera/viewport/splat state. Used
+   * for the click-vs-now comparison and for the report; never written back
+   * into any click record.
+   */
+  captureLiveState(): LiveCapture | null {
+    if (!this.camera || !this.canvas) return null;
+    return {
+      capturedAt: new Date().toISOString(),
+      camera: captureCameraState(this.camera),
+      viewport: captureViewport(this.canvas),
+      splat: captureSplatTransform(this.splat),
+    };
+  }
+
+  /** Replay the click-hit reprojection of one request through its click-time camera. */
+  validateReprojection(requestIndex?: number): ClickValidationResult {
+    const request = this.resolveRequest(requestIndex);
+    if (!request) {
+      return {
+        requestIndex: requestIndex ?? -1,
+        status: "unavailable",
+        reason: "no diagnostic request with that index",
+        cameraSource: null,
+        original: null,
+        hit: null,
+        rayConsistency: null,
+        projected: null,
+        errors: null,
+        spaceHypothesis: null,
+      };
+    }
+    return validateClickReprojection(request);
+  }
+
+  /** Reproject every valid sampling hit of one request through its click-time camera. */
+  validateSamples(requestIndex?: number, detectionIndex?: number): SamplesValidationResult {
+    const request = this.resolveRequest(requestIndex);
+    if (!request) {
+      return {
+        requestIndex: requestIndex ?? -1,
+        cameraSource: null,
+        status: "unavailable",
+        reason: "no diagnostic request with that index",
+        totalCells: 0,
+        hitCells: 0,
+        missCells: 0,
+        projectedCells: 0,
+        behindCameraCells: 0,
+        cameraUnavailableCells: 0,
+        rayInconsistentCells: 0,
+        normalizedErrorStats: null,
+        pixelErrorStats: null,
+        rows: [],
+      };
+    }
+    return validateSampleReprojections(request, { detectionIndex });
+  }
+
+  /** Full JSON-serializable validation report (console: exportValidation()). */
+  exportValidation(requestIndex?: number): ValidationReport | null {
+    const request = this.resolveRequest(requestIndex);
+    if (!request) return null;
+    return buildValidationReport(request, this.captureLiveState());
+  }
+
+  /** Show/hide the Coordinate Validation Panel (also bound to the V key). */
+  toggleValidationPanel(): boolean {
+    if (!this.validationPanel) {
+      console.warn("[annotation-diagnostics] validation panel unavailable (no camera/canvas)");
+      return false;
+    }
+    return this.validationPanel.toggle();
+  }
+
+  private resolveRequest(requestIndex?: number): AnnotationRequestDiagnostics | null {
+    if (requestIndex !== undefined) {
+      return this.requests.find((request) => request.index === requestIndex) ?? null;
+    }
+    return this.last();
+  }
+
+  // ------------------------------------------------------------------
   // Internals
   // ------------------------------------------------------------------
 
   private attachKeyboard(): void {
-    window.addEventListener("keydown", (event) => {
+    this.keyboardHandler = (event: KeyboardEvent) => {
       if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (
@@ -287,8 +429,11 @@ export class AnnotationDiagnostics {
         this.toggle();
       } else if (key === "o") {
         this.toggleOverlay();
+      } else if (key === "v") {
+        this.toggleValidationPanel();
       }
-    });
+    };
+    window.addEventListener("keydown", this.keyboardHandler);
   }
 
   private applyVisibility(): void {

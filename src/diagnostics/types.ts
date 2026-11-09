@@ -21,6 +21,68 @@ export interface QuatRecord {
   readonly w: number;
 }
 
+/**
+ * Column-major 4x4 matrix as 16 numbers, exactly `THREE.Matrix4.elements`
+ * order. Recorded verbatim so validation can replay the transform the
+ * renderer actually used, without reconstructing it from parameters.
+ */
+export type Matrix4Record = readonly number[];
+
+/** Full camera state frozen at one moment (click time or validation time). */
+export interface CameraStateRecord {
+  readonly position: Vec3Record;
+  readonly quaternion: QuatRecord;
+  readonly worldMatrix: Matrix4Record;
+  readonly inverseWorldMatrix: Matrix4Record;
+  readonly projectionMatrix: Matrix4Record;
+  /** Vertical field of view in degrees; null when the camera is not perspective. */
+  readonly fov: number | null;
+  readonly aspect: number | null;
+  readonly near: number | null;
+  readonly far: number | null;
+  readonly cameraType: string;
+  readonly isPerspective: boolean;
+}
+
+/**
+ * Canvas/viewport geometry frozen alongside the camera state. Normalized
+ * click coordinates are relative to this rect, so pixel errors must be
+ * computed with these dimensions (not the current ones).
+ */
+export interface ViewportRecord {
+  /** Canvas bounding rect in CSS pixels (viewport coordinates). */
+  readonly rectLeft: number;
+  readonly rectTop: number;
+  readonly rectWidth: number;
+  readonly rectHeight: number;
+  /** Canvas layout size in CSS pixels. */
+  readonly cssWidth: number;
+  readonly cssHeight: number;
+  /** Drawing-buffer size in device pixels. */
+  readonly bufferWidth: number;
+  readonly bufferHeight: number;
+  readonly devicePixelRatio: number;
+}
+
+/** Splat world transform frozen at the same moment as the camera state. */
+export interface SplatTransformRecord {
+  readonly position: Vec3Record;
+  readonly quaternion: QuatRecord;
+  readonly scale: Vec3Record;
+  readonly worldMatrix: Matrix4Record;
+}
+
+/**
+ * Everything needed to replay a projection exactly as the renderer would
+ * have done it at click time. Null on requests that predate Task 2.1C and
+ * on inject requests (no click).
+ */
+export interface ClickCameraSnapshot {
+  readonly camera: CameraStateRecord;
+  readonly viewport: ViewportRecord;
+  readonly splat: SplatTransformRecord | null;
+}
+
 /** Normalized detection box, ordered [ymin, xmin, ymax, xmax]. */
 export type NormalizedBox = [number, number, number, number];
 
@@ -160,6 +222,12 @@ export interface RequestClickRecord {
   readonly rayOrigin: Vec3Record | null;
   readonly rayDirection: Vec3Record | null;
   readonly hit: { readonly position: Vec3Record; readonly distance: number } | null;
+  /**
+   * Full click-time camera/viewport/splat state (Task 2.1C). Optional so
+   * records created before Task 2.1C remain valid; null when the viewer
+   * could not capture it. Never mutated after the click.
+   */
+  readonly cameraSnapshot?: ClickCameraSnapshot | null;
 }
 
 /** One annotation request: click + Gemini response + per-detection records. */

@@ -190,7 +190,13 @@ export class SplatViewer {
     this.spark = new SparkRenderer({ renderer: this.renderer });
     this.scene.add(this.spark);
     if (import.meta.env.DEV) {
-      this.annotationDiagnostics = new AnnotationDiagnostics(this.scene);
+      // Task 2.1C: camera + canvas let the diagnostics freeze full click-time
+      // camera/viewport state for coordinate validation.
+      this.annotationDiagnostics = new AnnotationDiagnostics(
+        this.scene,
+        this.camera,
+        this.renderer.domElement,
+      );
     }
     this.cube = this.addBox();
     this.addGroundPlane();
@@ -498,6 +504,7 @@ export class SplatViewer {
     this.clearChatSelection();
     // Dev diagnostics: worlds never share records or visualization objects.
     this.annotationDiagnostics?.clear();
+    this.annotationDiagnostics?.setSplat(null);
     // Annotations unregister (while the registry is still alive) one by one,
     // then the per-world registry itself is dropped with the world. Persisted
     // records stay scene-keyed so the same scene can be restored on reload.
@@ -605,6 +612,8 @@ export class SplatViewer {
     splat.position.set(0, -1.5, 0);
     this.currentSplat = splat;
     this.scene.add(splat);
+    // Dev diagnostics: freeze the splat's world transform into click snapshots.
+    this.annotationDiagnostics?.setSplat(splat);
 
     try {
       await splat.initialized;
@@ -1280,9 +1289,12 @@ if (import.meta.env.DEV) {
     get spatialRegistry() { return (viewer as any).spatialRegistry; },
     get chatSelection() { return viewer.getChatSelection(); },
     /**
-     * Task 1 development-only pipeline diagnostics (see
-     * src/diagnostics/AnnotationDiagnostics.ts). Use last()/list() for the
-     * structured per-request records, toggle()/toggleOverlay() for visibility.
+     * Development-only pipeline diagnostics (Task 1) + coordinate validation
+     * (Task 2.1C); see src/diagnostics/AnnotationDiagnostics.ts. Use
+     * last()/list() for the structured per-request records,
+     * validateReprojection()/validateSamples()/exportValidation() for
+     * coordinate-frame validation, toggle()/toggleOverlay() for visibility,
+     * toggleValidationPanel() for the validation panel.
      */
     get diagnostics() { return (viewer as any).annotationDiagnostics ?? null; },
     /**

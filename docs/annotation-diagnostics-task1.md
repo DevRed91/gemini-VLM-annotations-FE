@@ -43,7 +43,10 @@ Records are the single source of truth: after each pipeline stage the 3D group a
 
 - **`D`** — toggle all diagnostics (3D markers + overlay) on/off.
 - **`O`** — toggle only the 2D overlay.
+- **`V`** — open/close the Coordinate Validation Panel (Task 2.1C).
 - Both keys are ignored while typing in an input/textarea/contenteditable and when modifier keys are held.
+
+**UI cleanup note:** every diagnostic surface starts **hidden** — no diagnostic UI is visible when the viewer loads or while annotating. Records still accumulate regardless (they are the data source for the panel and console API); press `D` to show the 3D markers + overlay on demand.
 
 Console (dev only): every completed detection logs a multi-line summary prefixed `[annotation-diagnostics]` — anchor source, failures, box, grid hit/miss counts, all cluster sizes + centroids + extents + which is selected, noise, measured centroid, OBB, lift, anchor.
 

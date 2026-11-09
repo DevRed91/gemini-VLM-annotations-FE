@@ -342,7 +342,7 @@ export class DiagnosticOverlay {
   private drawHints(height: number): void {
     const ctx = this.context;
     const text =
-      "[dev] D: toggle diagnostics · O: toggle overlay · window.__sl.diagnostics.last() for data";
+      "[dev] D: toggle diagnostics · O: toggle overlay · V: coordinate validation · window.__sl.diagnostics.last() for data";
     ctx.font = "12px ui-monospace, Menlo, monospace";
     const metrics = ctx.measureText(text);
     ctx.fillStyle = DIAGNOSTIC_CSS_COLORS.panelBackground;
