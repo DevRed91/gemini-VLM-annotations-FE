@@ -30,6 +30,11 @@ export function singularize(word: string): string {
   return word;
 }
 
+/** Singularizes each word in an already-normalized phrase. */
+export function singularizePhrase(normalized: string): string {
+  return normalized.split(" ").map(singularize).join(" ");
+}
+
 /** Both halves of a split compound must be at least this long. */
 const MIN_COMPOUND_PART_LENGTH = 3;
 /** At most this many tokens may come out of one compound word. */

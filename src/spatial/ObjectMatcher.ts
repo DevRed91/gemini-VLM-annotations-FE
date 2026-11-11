@@ -8,8 +8,9 @@
  * legacy flat attributes. It never calls Gemini or any annotation API.
  *
  * Design boundaries:
- * - Exact or whole-word-phrase matching after normalization: no fuzzy matching, embeddings,
- *   vector databases, or semantic search, and no Gemini/API calls.
+ * - Exact or whole-word-phrase matching after normalization and conservative
+ *   singularization: no fuzzy matching, embeddings, vector databases, or
+ *   semantic search, and no Gemini/API calls.
  * - Read-only: the matcher never mutates the inventory, the registry, or any
  *   viewer state, and has no runtime imports (no Three.js, Spark, DOM).
  * - Geometry-blind: `worldObb` is never read and `attributes.obb` never
@@ -28,6 +29,7 @@ import type {
   SearchResult,
   SearchQuantifier,
 } from "./types.ts";
+import { singularizePhrase } from "./morphology.ts";
 import { DEFAULT_SYNONYMS, foldSynonyms } from "./synonyms.ts";
 
 /**
@@ -216,7 +218,7 @@ function attributeMatches(
   return normalizedStored === wanted;
 }
 
-/** Match a complete normalized phrase anywhere in a normalized label. */
+/** Match a complete normalized, singularized phrase anywhere in a label. */
 function labelMatches(registered: string, wanted: string): boolean {
   return registered === wanted ||
     registered.startsWith(`${wanted} `) ||
@@ -254,7 +256,9 @@ export function searchObjects(
   const lookup = buildSynonymLookup(options);
   const parsed = parseQuery(query);
 
-  const wantedLabel = parsed.label === null ? null : foldSynonyms(parsed.label, lookup);
+  const wantedLabel = parsed.label === null
+    ? null
+    : foldSynonyms(singularizePhrase(parsed.label), lookup);
 
   const matches: string[] = [];
   for (const object of inventory) {
@@ -266,7 +270,10 @@ export function searchObjects(
     if (wantedLabel !== null) {
       // Every semantic field folds through the same dictionary as queries.
       const labelMatched = semanticLabelCandidates(object).some((candidate) =>
-        labelMatches(foldSynonyms(normalizeLabel(candidate), lookup), wantedLabel),
+        labelMatches(
+          foldSynonyms(singularizePhrase(normalizeLabel(candidate)), lookup),
+          wantedLabel,
+        ),
       );
       if (!labelMatched) continue;
     }

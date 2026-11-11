@@ -1,4 +1,5 @@
 import { normalizeLabel } from "../spatial/ObjectMatcher.ts";
+import { singularize } from "../spatial/morphology.ts";
 import type { SearchQuery } from "../spatial/types.ts";
 
 export type LocalQueryParseResult =
@@ -20,13 +21,6 @@ const ATTRIBUTE_WORDS: Readonly<Record<string, readonly [string, string]>> = {
 
 const COMMAND_PREFIXES = ["look for ", "search for ", "where is ", "find ", "search ", "show ", "locate "];
 const NON_TARGET_WORDS = new Set(["in", "scene"]);
-
-function singularize(word: string): string {
-  if (word.length > 4 && word.endsWith("ies")) return `${word.slice(0, -3)}y`;
-  if (word.length > 4 && /(ches|shes|xes|zes)$/.test(word)) return word.slice(0, -2);
-  if (word.length > 3 && word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
-  return word;
-}
 
 /**
  * Parses a deliberately small local-search vocabulary. Unknown words remain
