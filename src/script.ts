@@ -32,6 +32,16 @@ import { ChatController } from "./chat/ChatController";
 import { ChatPanel } from "./chat/ChatPanel";
 import { ChatAnnotationSelection } from "./viewer/ChatAnnotationSelection";
 import { captureViewSnapshot, type ViewSnapshot } from "./viewer/ViewSnapshot";
+import {
+  StaleSnapshotError,
+  assertBindingCurrent,
+  assertImageSpaceBox,
+  assertPoseUnchanged,
+  bindSnapshot,
+  snapshotSplatRay,
+  type LiveWorldState,
+  type SnapshotBinding,
+} from "./viewer/SnapshotBinding";
 import { deriveSearchAttributes } from "./chat/LocalQueryParser";
 import GeometricContextManager from "./GeometricContextManager/GeometricContextManager";
 import type { DBSCANClusterReport } from "./GeometricContextManager/GeometricContextManager";
@@ -292,8 +302,19 @@ export class SplatViewer {
       const rect = this.renderer.domElement.getBoundingClientRect();
       const x = (e.clientX - rect.left) / rect.width;
       const y = (e.clientY - rect.top) / rect.height;
-      const clickCast = this.splatRay(x, y);
-      const clickWorldPos = clickCast?.intersection?.point ?? null;
+      // Freeze the view synchronously, before any await, so the image sent to
+      // Gemini, the click hit, and later sampling rays share one camera pose.
+      const poseAtClick = Array.from(this.camera.matrixWorld.elements);
+      let binding: SnapshotBinding;
+      try {
+        binding = this.captureBoundSnapshot();
+        assertPoseUnchanged(poseAtClick, binding.snapshot);
+      } catch (error) {
+        console.warn("Annotation request rejected: could not capture a consistent view snapshot.", error);
+        return;
+      }
+      const clickCast = snapshotSplatRay(binding, this.liveWorldState(), x, y);
+      const clickWorldPos = clickCast.intersection?.point ?? null;
 
       console.log(`User clicked at: x=${x.toFixed(2)}, y=${y.toFixed(2)}`);
       this.annotationDiagnostics?.recordClick({
@@ -303,12 +324,12 @@ export class SplatViewer {
         clientY: e.clientY,
         cameraPosition: this.camera.getWorldPosition(new THREE.Vector3()),
         cameraQuaternion: this.camera.getWorldQuaternion(new THREE.Quaternion()),
-        ray: clickCast?.ray ?? null,
-        intersection: clickCast?.intersection ?? null,
+        ray: clickCast.ray,
+        intersection: clickCast.intersection,
       });
 
       // Trigger the new coordinate-based request
-      this.requestAnnotationFromGemini(x, y, clickWorldPos);
+      void this.requestAnnotationFromGemini(x, y, clickWorldPos, binding);
     });
   }
 
@@ -662,10 +683,11 @@ export class SplatViewer {
     }
   }
   /**
-   * Core splat raycast shared by the click path and box sampling. Returns the
-   * camera ray plus the nearest intersection, or null when no splat is loaded.
+   * Live-camera splat raycast. No longer used by the annotation pipeline
+   * (click, sampling and fallback all use snapshot rays); retained as the
+   * legacy reference for before/after comparison in validation scripts.
    */
-  private splatRay(
+  public splatRay(
     normalizedX: number,
     normalizedY: number,
   ): { ray: THREE.Ray; intersection: THREE.Intersection | null } | null {
@@ -687,12 +709,6 @@ export class SplatViewer {
     return null;
   }
 
-  private getAnnotationPosition(
-    normalizedX: number,
-    normalizedY: number,
-  ): THREE.Vector3 | null {
-    return this.splatRay(normalizedX, normalizedY)?.intersection?.point ?? null;
-  }
   // Create a simple UI helper function
   // private createAnnotationElement(position: THREE.Vector3, label: string) {
   //   const div = document.createElement("div");
@@ -983,30 +999,32 @@ export class SplatViewer {
 
   /** Sample world-space ray hits; WebGL depth readback is deliberately avoided. */
   private samplePointsFromBox(
+    binding: SnapshotBinding,
     box: AnnotationDetection["box"],
     probes?: SampleCellProbe[],
   ): THREE.Vector3[] {
+    assertImageSpaceBox(binding.snapshot, box);
     const [ymin, xmin, ymax, xmax] = box;
-    const nonLod = this.currentSplat ? isNonLodSplat(this.currentSplat) : false;
+    const nonLod = isNonLodSplat(binding.splat as SplatMesh);
     const gridSize = computeSampleGridSize(box, nonLod);
     const points: THREE.Vector3[] = [];
     for (let row = 0; row < gridSize; row++) {
       for (let col = 0; col < gridSize; col++) {
         const x = xmin + ((col + 0.5) / gridSize) * (xmax - xmin);
         const y = ymin + ((row + 0.5) / gridSize) * (ymax - ymin);
-        const cast = this.splatRay(x, y);
+        const cast = snapshotSplatRay(binding, this.liveWorldState(), x, y);
         if (probes) {
           probes.push({
             row,
             col,
             normalizedX: x,
             normalizedY: y,
-            rayOrigin: cast ? cast.ray.origin.clone() : null,
-            rayDirection: cast ? cast.ray.direction.clone() : null,
+            rayOrigin: cast.ray.origin.clone(),
+            rayDirection: cast.ray.direction.clone(),
             intersection: cast?.intersection ?? null,
           });
         }
-        const point = cast?.intersection?.point;
+        const point = cast.intersection?.point;
         if (point) points.push(point);
       }
     }
@@ -1016,13 +1034,14 @@ export class SplatViewer {
   private async annotateFromDetection(
     detection: AnnotationDetection,
     clickWorldPosAtClick: THREE.Vector3 | null,
+    binding: SnapshotBinding = this.captureBoundSnapshot(),
   ): Promise<ViewerAnnotation | null> {
-    const generation = this.worldGeneration;
+    const generation = binding.snapshot.worldGeneration;
     const diagnostics = this.annotationDiagnostics;
     // Every stage of runDetectionPipeline reports into the recorder (dev only).
     const recorder = diagnostics?.beginDetection(detection) ?? null;
     try {
-      return await this.runDetectionPipeline(detection, clickWorldPosAtClick, recorder, generation);
+      return await this.runDetectionPipeline(detection, clickWorldPosAtClick, recorder, generation, binding);
     } finally {
       if (recorder) diagnostics?.endDetection(recorder);
     }
@@ -1033,10 +1052,14 @@ export class SplatViewer {
     clickWorldPosAtClick: THREE.Vector3 | null,
     recorder: DetectionRecorder | null,
     generation: number,
+    binding: SnapshotBinding,
   ): Promise<ViewerAnnotation | null> {
-    const splat = this.currentSplat;
-    if (!splat || !this.splatLoaded) {
-      recorder?.failure("world", "no splat loaded");
+    const splat = binding.splat as SplatMesh;
+    try {
+      assertBindingCurrent(binding, this.liveWorldState());
+    } catch (error) {
+      if (!(error instanceof StaleSnapshotError)) throw error;
+      recorder?.failure("world", error.message);
       return null;
     }
     const box = this.sanitizeDetectionBox(detection.box);
@@ -1050,7 +1073,7 @@ export class SplatViewer {
     const semanticDescription = detection.description ?? metadata?.description;
     const nonLod = isNonLodSplat(splat);
     const probes: SampleCellProbe[] | undefined = this.annotationDiagnostics ? [] : undefined;
-    const sampledPoints = this.samplePointsFromBox(box, probes);
+    const sampledPoints = this.samplePointsFromBox(binding, box, probes);
     recorder?.sampling(computeSampleGridSize(box, nonLod), probes ?? []);
     const dbscanParams = { eps: 0.3, minPts: nonLod ? 10 : 4 };
     let clusterReport: DBSCANClusterReport | null = null;
@@ -1144,6 +1167,7 @@ export class SplatViewer {
     }
 
     const fallbackPosition = clickWorldPosAtClick ?? this.getAnnotationPosition(
+      binding,
       (box[1] + box[3]) / 2,
       (box[0] + box[2]) / 2,
     );
@@ -1175,18 +1199,41 @@ export class SplatViewer {
     );
   }
 
-private async captureSnapshot(): Promise<string> {
-    // 1. Force a render to ensure scene is up to date
-    this.renderer.render(this.scene, this.camera);
-    
-    // 2. Wait for GPU buffer sync
-    await new Promise(resolve => requestAnimationFrame(resolve));
-    
-    // 3. Optional: Force GPU finish if necessary (very safe, prevents black screens)
-    this.renderer.getContext().finish(); 
-    
-    return this.renderer.domElement.toDataURL("image/jpeg", 0.7);
-}
+  private liveWorldState(): LiveWorldState {
+    return {
+      worldGeneration: this.worldGeneration,
+      splat: this.currentSplat,
+      splatLoaded: this.splatLoaded,
+    };
+  }
+
+  /**
+   * Capture a view snapshot bound to the live splat instance. Throws
+   * StaleSnapshotError before the splat is initialized.
+   */
+  private captureBoundSnapshot(): SnapshotBinding {
+    const live = this.liveWorldState();
+    if (!live.splat || !live.splatLoaded) {
+      throw new StaleSnapshotError("no-splat", "Cannot capture a view snapshot before the splat is initialized");
+    }
+    return bindSnapshot(this.captureViewSnapshot(), live);
+  }
+
+  /** Box-centre fallback hit; snapshot-bound (formerly live-camera). */
+  private getAnnotationPosition(
+    binding: SnapshotBinding,
+    normalizedX: number,
+    normalizedY: number,
+  ): THREE.Vector3 | null {
+    try {
+      return snapshotSplatRay(binding, this.liveWorldState(), normalizedX, normalizedY)
+        .intersection?.point ?? null;
+    } catch (error) {
+      if (error instanceof StaleSnapshotError) return null;
+      throw error;
+    }
+  }
+
 // public async requestAnnotationFromGemini(box: number[]) {
 //     try {
 //         // const dataUrl = this.renderer.domElement.toDataURL("image/jpeg", 0.7);
@@ -1224,12 +1271,14 @@ private async captureSnapshot(): Promise<string> {
     clickX: number,
     clickY: number,
     clickWorldPosAtClick: THREE.Vector3 | null,
+    binding: SnapshotBinding = this.captureBoundSnapshot(),
   ): Promise<void> {
-    const generation = this.worldGeneration;
+    // Identity of this request: its snapshot's world, not whatever is live later.
+    const generation = binding.snapshot.worldGeneration;
     try {
       this.setAnnotationLoading(true);
       this.annotationDiagnostics?.beginRequest("click", generation);
-      const dataUrl = await this.captureSnapshot();
+      const dataUrl = binding.snapshot.image.dataUrl;
       this.annotationDiagnostics?.recordSnapshot(dataUrl);
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (BYPASS_TUNNEL_REMINDER) headers["bypass-tunnel-reminder"] = "true";
@@ -1259,7 +1308,7 @@ private async captureSnapshot(): Promise<string> {
       for (const detection of detections) {
         if (generation !== this.worldGeneration) return;
         if (!detection?.label || !Array.isArray(detection.box) || detection.box.length !== 4) continue;
-        await this.annotateFromDetection(detection, clickWorldPosAtClick);
+        await this.annotateFromDetection(detection, clickWorldPosAtClick, binding);
       }
     } catch (err) {
       if (generation === this.worldGeneration) console.error("Museum Mode Error:", err);

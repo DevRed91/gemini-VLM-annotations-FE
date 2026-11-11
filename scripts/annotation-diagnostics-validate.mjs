@@ -114,7 +114,7 @@ async function waitForRaycastReady(page) {
   await page.waitForFunction(
     () => {
       if (!window.__sl?.ready || !(window.__sl?.splat?.numSplats > 0)) return false;
-      return window.__sl.viewer.getAnnotationPosition(0.5, 0.5) !== null;
+      return window.__sl.viewer.getAnnotationPosition(window.__sl.viewer.captureBoundSnapshot(), 0.5, 0.5) !== null;
     },
     null,
     { timeout: 240000 },
