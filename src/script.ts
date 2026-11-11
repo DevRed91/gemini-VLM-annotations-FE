@@ -31,6 +31,7 @@ import {
 import { ChatController } from "./chat/ChatController";
 import { ChatPanel } from "./chat/ChatPanel";
 import { ChatAnnotationSelection } from "./viewer/ChatAnnotationSelection";
+import { captureViewSnapshot, type ViewSnapshot } from "./viewer/ViewSnapshot";
 import { deriveSearchAttributes } from "./chat/LocalQueryParser";
 import GeometricContextManager from "./GeometricContextManager/GeometricContextManager";
 import type { DBSCANClusterReport } from "./GeometricContextManager/GeometricContextManager";
@@ -1163,6 +1164,17 @@ export class SplatViewer {
     return annotation;
   }
 
+  /** Capture a new immutable view frame for snapshot-based consumers. */
+  public captureViewSnapshot(): ViewSnapshot {
+    return captureViewSnapshot(
+      this.renderer,
+      this.scene,
+      this.camera,
+      this.currentSplat,
+      this.worldGeneration,
+    );
+  }
+
 private async captureSnapshot(): Promise<string> {
     // 1. Force a render to ensure scene is up to date
     this.renderer.render(this.scene, this.camera);
@@ -1317,6 +1329,7 @@ if (import.meta.env.DEV) {
       v.renderer.render(v.scene, v.camera);
       return v.renderer.domElement.toDataURL("image/png");
     },
+    captureViewSnapshot() { return viewer.captureViewSnapshot(); },
     async inject(
       label: string,
       box: [number, number, number, number],

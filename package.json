@@ -11,7 +11,8 @@
     "test": "node --test tests/",
     "validate:viewer-selection": "node scripts/viewer-selection-phase3-validate.mjs",
     "validate:annotation-metadata": "node scripts/annotation-metadata-phase4-validate.mjs",
-    "validate:diagnostics": "node scripts/annotation-diagnostics-validate.mjs"
+    "validate:diagnostics": "node scripts/annotation-diagnostics-validate.mjs",
+    "validate:view-snapshot": "node scripts/view-snapshot-validate.mjs"
   },
   "dependencies": {
     "@sparkjsdev/spark": "^2.0.0",

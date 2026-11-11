@@ -170,6 +170,8 @@ p {
 }
 
 .annotation-container--chat-selected .annotation-label {
+    visibility: visible;
+    pointer-events: auto;
     border: 2px solid #38bdf8;
     box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.25), 0 4px 14px rgba(0, 0, 0, 0.5);
 }
@@ -572,6 +574,8 @@ canvas {
 }
 
 .annotation-label {
+  visibility: hidden;
+  pointer-events: none;
   z-index: 20;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   transition: border-color 120ms ease, box-shadow 120ms ease;
