@@ -77,6 +77,7 @@ export interface DemoOptions {
    * three-slot capture UI. Everything else in the demo behaves as normal.
    */
   presentation?: boolean;
+  /** Click-to-inference dispatch; the annotation and measurement tools stay active when false. */
   inferenceEnabled?: boolean;
   mode?: InferenceMode;
   delayMs?: number;
