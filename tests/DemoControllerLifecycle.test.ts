@@ -20,6 +20,7 @@ class FakeEl {
   id = "";
   attrs = new Map<string, string>();
   listeners = new Map<string, Array<(event?: unknown) => void>>();
+  onDispatchEvent: ((event: unknown) => void) | null = null;
   classList = { toggle() {}, add() {}, remove() {} };
   readonly tag: string;
   constructor(tag: string) { this.tag = tag; }
@@ -34,6 +35,7 @@ class FakeEl {
   }
   removeEventListener() {}
   click() { for (const fn of this.listeners.get("click") ?? []) fn({ stopPropagation() {} }); }
+  dispatchEvent(event: unknown) { this.onDispatchEvent?.(event); return true; }
   getBoundingClientRect() { return { left: 0, top: 0, width: 400, height: 300 }; }
   getContext() {
     return new Proxy({ measureText: (t: string) => ({ width: t.length * 12 }) } as Record<string, unknown>, {
@@ -73,9 +75,18 @@ function installEnv() {
     },
   };
   const g = globalThis as Record<string, unknown>;
-  const previous = { window: g.window, document: g.document };
+  const previous = { window: g.window, document: g.document, MouseEvent: g.MouseEvent };
+  class FakeMouseEvent {
+    readonly type: string;
+    [key: string]: unknown;
+    constructor(type: string, init: Record<string, unknown> = {}) {
+      this.type = type;
+      Object.assign(this, init);
+    }
+  }
   g.window = fakeWindow;
   g.document = { createElement: (tag: string) => new FakeEl(tag), head, body };
+  g.MouseEvent = FakeMouseEvent;
   return {
     listeners, body, fakeWindow,
     key(code: string, shiftKey = true) {
@@ -86,7 +97,7 @@ function installEnv() {
       const event = { key: "d", repeat: false, ctrlKey: false, metaKey: false, altKey: false, target: null };
       for (const l of [...listeners]) if (l.type === "keydown" && !l.capture) l.fn(event);
     },
-    restore() { g.window = previous.window; g.document = previous.document; },
+    restore() { g.window = previous.window; g.document = previous.document; g.MouseEvent = previous.MouseEvent; },
   };
 }
 
@@ -169,6 +180,17 @@ function makeHost(env: ReturnType<typeof installEnv>) {
     },
     liveWorldState: () => ({ worldGeneration: 1, splat, splatLoaded: true }),
   } as unknown as DemoHost;
+  canvas.onDispatchEvent = (rawEvent) => {
+    const event = rawEvent as { clientX: number; clientY: number };
+    const click = { target: canvas, clientX: event.clientX, clientY: event.clientY };
+    for (const listener of [...env.listeners]) {
+      if (listener.type === "click" && listener.capture) listener.fn(click);
+    }
+    if (host.isSelecting) host.captureViewSnapshot();
+    for (const listener of [...env.listeners]) {
+      if (listener.type === "click" && !listener.capture) listener.fn(click);
+    }
+  };
   const addAnnotation = (id: string) => {
     const helper = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial());
     helper.visible = false;

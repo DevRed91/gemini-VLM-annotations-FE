@@ -10,6 +10,7 @@ import { isDemoInferenceSuppressed } from "../utils/inferenceSuppression.ts";
  * in src/script.ts, so a production build contains none of src/demo/.
  *
  * URL parameters (all optional):
+ *   present=1           presentation mode: hide the engineering HUD, show the Front/Side/Rear capture UI
  *   mode=1|2|3          inference mode (default 1)
  *   inference=off       suppress scene-click Gemini requests; snapshots and measurements remain active
  *   delay=<ms>          mode 2 artificial delay (default 4000)
@@ -24,6 +25,7 @@ function parseOptions(search: string): DemoOptions {
   const params = new URLSearchParams(search);
   const options: DemoOptions = {};
   options.inferenceEnabled = !isDemoInferenceSuppressed(search, true);
+  if (params.get("present") === "1") options.presentation = true;
   const mode = Number(params.get("mode"));
   if (mode === 1 || mode === 2 || mode === 3) options.mode = mode as InferenceMode;
   const delay = Number(params.get("delay"));

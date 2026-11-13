@@ -23,6 +23,15 @@ import { SceneFCaptions, SceneFPanel, type SceneFMode, type SceneFSlotId, type S
 import { poseChange, type CameraSample } from "./settle.ts";
 import { SettledMeasurer, type CastResult, type SettledMeasurement } from "./settledMeasurement.ts";
 import { SettledOverlay } from "./SettledOverlay.ts";
+import { PresentationPanel } from "./PresentationPanel.ts";
+import {
+  CAPTURE_SLOTS,
+  PresentationCaptureStore,
+  sceneLabelFromUrl,
+  slotTitle,
+  type CaptureSlotId,
+  type PresentationCapture,
+} from "./presentationCaptures.ts";
 import {
   createInferenceSeam,
   type InferenceConfig,
@@ -47,6 +56,8 @@ export interface DemoHost {
   renderer: THREE.WebGLRenderer;
   currentSplat: (THREE.Object3D & SplatReadinessInput) | null;
   splatLoaded: boolean;
+  /** URL of the loaded world, used only to label the presentation view. */
+  currentWorldUrl?: string | null;
   isSelecting: boolean;
   annotationDiagnostics: AnnotationDiagnostics | null;
   objectHighlighter: { list(): unknown[] } | null;
@@ -61,6 +72,11 @@ export interface DemoHost {
 }
 
 export interface DemoOptions {
+  /**
+   * Presentation mode (?present=1): hides the engineering HUD and shows the
+   * three-slot capture UI. Everything else in the demo behaves as normal.
+   */
+  presentation?: boolean;
   inferenceEnabled?: boolean;
   mode?: InferenceMode;
   delayMs?: number;
@@ -122,6 +138,10 @@ export class DemoController {
   private readonly raycaster = new THREE.Raycaster();
   private readonly originalFetch: typeof fetch;
   private readonly ownCaptureWrapper: () => ViewSnapshot;
+  /** Production frame capture with the demo overlays hidden; no annotation side effects. */
+  private readonly captureCleanFrame: () => ViewSnapshot;
+  private readonly presentationStore = new PresentationCaptureStore();
+  private presentationPanel: PresentationPanel | null = null;
   private readonly cleanups: Array<() => void> = [];
   private active: ActiveSnapshot | null = null;
   private pendingSnapshot: ViewSnapshot | null = null;
@@ -153,7 +173,7 @@ export class DemoController {
   private homePose: PoseRecord;
   private disposed = false;
   /** Everything the demo ever captured/reset, for cleanup tests and the guide. */
-  readonly counters = { captures: 0, resets: 0, adopted: 0, staleRejections: 0 };
+  readonly counters = { captures: 0, resets: 0, adopted: 0, staleRejections: 0, presentationCaptures: 0 };
 
   private readonly host: DemoHost;
 
@@ -227,17 +247,20 @@ export class DemoController {
     // so it can never appear in the image sent to Gemini, (2) remember the exact
     // frozen snapshot production bound its sampling rays to.
     const original = host.captureViewSnapshot.bind(host);
-    this.ownCaptureWrapper = () => {
+    this.captureCleanFrame = () => {
       const wasVisible = this.root.visible;
       this.root.visible = false;
       try {
-        const snapshot = original();
-        this.pendingSnapshot = snapshot;
-        this.counters.captures++;
-        return snapshot;
+        return original();
       } finally {
         this.root.visible = wasVisible;
       }
+    };
+    this.ownCaptureWrapper = () => {
+      const snapshot = this.captureCleanFrame();
+      this.pendingSnapshot = snapshot;
+      this.counters.captures++;
+      return snapshot;
     };
     host.captureViewSnapshot = this.ownCaptureWrapper;
     this.cleanups.push(() => {
@@ -253,6 +276,17 @@ export class DemoController {
       cancelClear: () => this.cancelClearAnnotations(),
     });
     this.cleanups.push(() => this.hud.dispose());
+
+    if (options.presentation) {
+      // Engineering HUD hidden only here; normal demo mode never reaches this.
+      this.hud.setVisible(false);
+      this.presentationPanel = new PresentationPanel({ capture: (slot) => void this.capturePresentationSlot(slot) });
+      this.cleanups.push(() => {
+        this.presentationPanel?.dispose();
+        this.presentationPanel = null;
+        this.presentationStore.clear();
+      });
+    }
 
     this.captionPanel = new SceneFPanel(this.captions, { bindLast: (slot) => this.bindLastPose(slot) });
     this.cleanups.push(() => this.captionPanel.dispose());
@@ -308,6 +342,44 @@ export class DemoController {
       new MouseEvent("click", { bubbles: true, cancelable: true, clientX, clientY, view: window }),
     );
     return true;
+  }
+
+  /**
+   * Presentation capture: ONE synchronous render + readback through the same
+   * ViewSnapshot path production uses, so the stored JPEG, camera pose and
+   * projection all describe the same frame. Assigned to exactly the slot the
+   * presenter chose; other slots are untouched and nothing is classified.
+   * The annotation pipeline (pending snapshot, counters.captures) is not involved.
+   */
+  capturePresentationSlot(slot: CaptureSlotId): PresentationCapture | null {
+    const panel = this.presentationPanel;
+    if (!panel || this.disposed) return null;
+    if (!this.host.currentSplat || !this.host.splatLoaded) {
+      panel.warn("Scene is still loading — try again in a moment");
+      return null;
+    }
+    try {
+      const snapshot = this.captureCleanFrame();
+      const capture = this.presentationStore.assign(slot, snapshot, Date.now());
+      this.counters.presentationCaptures++;
+      this.syncPresentation();
+      panel.confirm(slot, `${slotTitle(slot)} view captured`);
+      return capture;
+    } catch (error) {
+      panel.warn(`Capture failed: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Re-render the presentation UI from the store; drops captures from a replaced world. */
+  private syncPresentation(): void {
+    const panel = this.presentationPanel;
+    if (!panel) return;
+    this.presentationStore.dropOtherWorlds(this.host.liveWorldState().worldGeneration);
+    panel.render({
+      sceneLabel: sceneLabelFromUrl(this.host.currentWorldUrl),
+      captures: this.presentationStore.slots(),
+    });
   }
 
   private adoptPendingSnapshot(): void {
@@ -558,6 +630,7 @@ export class DemoController {
     const now = performance.now();
     if (!force && now - this.lastHudAt < HUD_INTERVAL_MS) return;
     this.lastHudAt = now;
+    this.syncPresentation();
     const cfg = this.seam.config();
     const active = this.active;
     const record = active ? this.pollPipeline(active) : null;
@@ -900,6 +973,10 @@ export class DemoController {
         KeyP: () => this.logPose(),
         KeyT: () => this.cycleStages(),
         KeyF: () => this.cycleCaptions(),
+        // Presentation mode only: Shift+1/2/3 assign the current view to Front/Side/Rear.
+        ...(this.presentationPanel
+          ? Object.fromEntries(CAPTURE_SLOTS.map((slot) => [slot.key, () => void this.capturePresentationSlot(slot.id)]))
+          : {}),
       };
       const handler = handlers[event.code];
       if (!handler) return;
@@ -962,6 +1039,8 @@ export class DemoController {
       productionDeviation: active?.productionDeviation ?? null,
       liveCost: this.cost.summary(),
       liveMode: this.liveMode,
+      snapshotRaysVisible: this.snapshotVisible,
+      liveRaysVisible: this.liveVisible,
       settled: this.measurer.latest(),
       settledStatus: this.measurer.status(),
       splatCasts: this.measurer.castCount(),
@@ -970,6 +1049,9 @@ export class DemoController {
       diagnosticsEnabled: this.host.annotationDiagnostics?.isEnabled ?? null,
       liveIntervalMs: this.liveIntervalMs,
       overlayVisible: this.root.visible,
+      presentation: this.presentationPanel
+        ? { captures: this.presentationStore.slots(), count: this.presentationStore.count() }
+        : null,
       pendingRequests: this.seam.pendingCount(),
       stage: this.stages.stage(),
       request: this.requestText,

@@ -134,6 +134,8 @@ export class SplatViewer {
   private animateT = dyno.dynoFloat(0);
   private baseTime = 0;
   private splatLoaded = false;
+  /** URL of the loaded world; null until a load completes. Read by the demo presentation label. */
+  public currentWorldUrl: string | null = null;
   private annotations: ViewerAnnotation[] = [];
   private isSelecting = false;
   // Read synchronously before scene clicks are possible; production defaults on.
@@ -544,6 +546,7 @@ export class SplatViewer {
     if (this.currentSplat) this.disposeSplat(this.currentSplat);
     this.currentSplat = null;
     this.splatLoaded = false;
+    this.currentWorldUrl = null;
     this.lastClusterFit = null;
   }
 
@@ -675,6 +678,7 @@ export class SplatViewer {
       );
       for (const record of storedAnnotations) this.restoreStoredAnnotation(record);
       this.splatLoaded = true;
+      this.currentWorldUrl = url;
       this.chatController?.setSceneStatus("ready");
       return true;
     } catch (error) {
