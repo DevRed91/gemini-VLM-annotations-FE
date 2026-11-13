@@ -10,6 +10,7 @@ export interface HudModel {
   mode: InferenceMode;
   modeLabel: string;
   modeNote: string;
+  inferenceEnabled: boolean;
   annotationToolOn: boolean;
   snapshot: { dataUrl: string; id: string; capturedAt: string; generation: number; imageSize: string } | null;
   drift: { position: string; rotation: string } | null;
@@ -60,6 +61,7 @@ const CSS = `
 .demo-hud__mode{font-weight:700;color:#ffd166}
 .demo-hud__note{color:#b8c2cc;margin-bottom:6px}
 .demo-hud__warn{color:#ff6b6b;font-weight:700;margin:4px 0}
+.demo-hud__inference-disabled{color:#ff9b9b;background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.5);border-radius:4px;padding:5px 6px;margin:5px 0;font-weight:700}
 .demo-hud__row{display:flex;justify-content:space-between;gap:8px;margin:2px 0}
 .demo-hud__row span:first-child{color:#93a1ad}
 .demo-hud__row span:last-child{text-align:right}
@@ -94,6 +96,7 @@ export class Hud {
   private readonly modeText = el("div", "demo-hud__mode");
   private readonly noteText = el("div", "demo-hud__note");
   private readonly warn = el("div", "demo-hud__warn");
+  private readonly inferenceDisabled = el("div", "demo-hud__inference-disabled");
   private readonly image = el("img", "demo-hud__img");
   private readonly snapMeta = el("div", "demo-hud__snapmeta");
   private readonly rows = new Map<string, HTMLElement>();
@@ -114,7 +117,13 @@ export class Hud {
     this.actions = actions;
     this.style.textContent = CSS;
     this.root.setAttribute("data-demo-hud", "true");
-    this.root.append(el("div", "demo-hud__title", "DEMO · DEV ONLY · Geometric consistency"), this.modeText, this.noteText, this.warn);
+    this.root.append(
+      el("div", "demo-hud__title", "DEMO · DEV ONLY · Geometric consistency"),
+      this.inferenceDisabled,
+      this.modeText,
+      this.noteText,
+      this.warn,
+    );
 
     const snap = el("div", "demo-hud__snap");
     this.image.alt = "snapshot preview";
@@ -204,6 +213,8 @@ export class Hud {
     if (this.disposed) return;
     this.set(this.modeText, `MODE ${model.mode} · ${model.modeLabel}`);
     this.set(this.noteText, model.modeNote);
+    this.set(this.inferenceDisabled, model.inferenceEnabled ? "" : "GEMINI INFERENCE: DISABLED");
+    this.inferenceDisabled.style.display = model.inferenceEnabled ? "none" : "";
     this.set(this.warn, model.annotationToolOn ? "" : "Annotation Tool is OFF — enable it (toolbar) before Shift+S");
     for (const [mode, button] of this.modeButtons) button.classList.toggle("active", mode === model.mode);
 

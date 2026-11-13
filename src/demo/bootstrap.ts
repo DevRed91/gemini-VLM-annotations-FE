@@ -2,6 +2,7 @@ import { SplatMesh } from "@sparkjsdev/spark";
 import { DemoController, type DemoHost, type DemoOptions } from "./DemoController.ts";
 import type { InferenceMode } from "./inferenceSeam.ts";
 import type { NormalizedBox } from "./driftMath.ts";
+import { isDemoInferenceSuppressed } from "../utils/inferenceSuppression.ts";
 
 /**
  * Entry point of the DEV-only demo harness. Reached ONLY through
@@ -10,6 +11,7 @@ import type { NormalizedBox } from "./driftMath.ts";
  *
  * URL parameters (all optional):
  *   mode=1|2|3          inference mode (default 1)
+ *   inference=off       suppress scene-click Gemini requests; snapshots and measurements remain active
  *   delay=<ms>          mode 2 artificial delay (default 4000)
  *   box=ymin,xmin,ymax,xmax   mode 3 hand-specified box
  *   live=ray|hits       live reference rays. DEFAULT ray = camera-only (no splat
@@ -21,6 +23,7 @@ import type { NormalizedBox } from "./driftMath.ts";
 function parseOptions(search: string): DemoOptions {
   const params = new URLSearchParams(search);
   const options: DemoOptions = {};
+  options.inferenceEnabled = !isDemoInferenceSuppressed(search, true);
   const mode = Number(params.get("mode"));
   if (mode === 1 || mode === 2 || mode === 3) options.mode = mode as InferenceMode;
   const delay = Number(params.get("delay"));

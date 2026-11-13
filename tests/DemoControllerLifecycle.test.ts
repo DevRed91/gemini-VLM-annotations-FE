@@ -225,8 +225,10 @@ describe("demo controller lifecycle (fake DOM, fake AnnotationDiagnostics)", () 
 
   test("camera-only live rays are the default and cast nothing into the splat while moving", () => {
     const rig = makeHost(env);
-    const d = create(rig);
+    const d = create(rig, { inferenceEnabled: false });
     assert.equal(d.controller.state().liveMode, "ray");
+    assert.equal(d.controller.state().inferenceEnabled, false);
+    assert.match(d.hud(), /GEMINI INFERENCE: DISABLED/);
     d.capture();
     assert.equal(d.controller.state().hasSnapshot, true);
     rig.splat.raycasts = 0;
@@ -245,9 +247,9 @@ describe("demo controller lifecycle (fake DOM, fake AnnotationDiagnostics)", () 
     assert.match(d.hud(), /camera rays · no splat intersection/);
   });
 
-  test("end to end: nine casts after settle, none while still, nine more after moving and settling", () => {
+  test("inference suppression leaves settled camera measurements active", () => {
     const rig = makeHost(env);
-    const d = create(rig);
+    const d = create(rig, { inferenceEnabled: false });
     d.capture();
     rig.splat.raycasts = 0;
     d.run(1000);
@@ -270,6 +272,32 @@ describe("demo controller lifecycle (fake DOM, fake AnnotationDiagnostics)", () 
     const fresh = d.controller.state().settled!;
     assert.equal(fresh.status, "current");
     assert.ok(fresh.measuredAtMs > stale.measuredAtMs);
+  });
+
+  test("Annotation Tool activation and Shift+S snapshot capture still work with inference disabled", () => {
+    const rig = makeHost(env);
+    const d = create(rig, { inferenceEnabled: false });
+    assert.equal(rig.host.isSelecting, true, "demo suppression leaves the Annotation Tool active");
+    rig.host.isSelecting = false;
+    env.key("KeyS");
+    assert.equal(d.controller.state().hasSnapshot, false, "Shift+S still requires the Annotation Tool");
+    assert.equal(d.controller.counters.captures, 0);
+
+    rig.host.isSelecting = true;
+    env.key("KeyS");
+    assert.equal(d.controller.counters.captures, 1);
+    assert.equal(d.controller.state().hasSnapshot, true);
+    assert.equal(d.controller.state().inferenceEnabled, false);
+    assert.match(d.hud(), /GEMINI INFERENCE: DISABLED/);
+
+    env.key("KeyV");
+    assert.equal(d.controller.state().snapshotRaysVisible, false);
+    env.key("KeyV");
+    assert.equal(d.controller.state().snapshotRaysVisible, true);
+    env.key("KeyL");
+    assert.equal(d.controller.state().liveRaysVisible, false);
+    env.key("KeyL");
+    assert.equal(d.controller.state().liveRaysVisible, true);
   });
 
   test("splat not ready: no casts until the real readiness inputs are present", () => {

@@ -52,6 +52,7 @@ import type { NormalizedBox } from "./diagnostics/types";
 import { GaussianObjectHighlighter } from "./utils/gaussianObjectHighlighter";
 import { defaultGaussianMaskColor } from "./utils/gaussianMaskManager";
 import { isNonLodSplat } from "./utils/gaussianIndexSupport";
+import { dispatchGeminiInference, isDemoInferenceSuppressed } from "./utils/inferenceSuppression";
 // import { OrbitControls } from "three/examples/jsm/Addons.js";
 
 const API_BASE_URL =
@@ -135,6 +136,11 @@ export class SplatViewer {
   private splatLoaded = false;
   private annotations: ViewerAnnotation[] = [];
   private isSelecting = false;
+  // Read synchronously before scene clicks are possible; production defaults on.
+  private readonly geminiInferenceEnabled = !isDemoInferenceSuppressed(
+    window.location.search,
+    import.meta.env.DEV,
+  );
   private annotationLoadingEl: HTMLElement | null = null;
   private objectHighlighter: GaussianObjectHighlighter | null = null;
   private worldGeneration = 0;
@@ -1267,11 +1273,23 @@ export class SplatViewer {
 //         console.error("Annotation Error:", err);
 //     }
 //   }
-  public async requestAnnotationFromGemini(
+  public requestAnnotationFromGemini(
     clickX: number,
     clickY: number,
     clickWorldPosAtClick: THREE.Vector3 | null,
-    binding: SnapshotBinding = this.captureBoundSnapshot(),
+    binding?: SnapshotBinding,
+  ): Promise<void> {
+    return dispatchGeminiInference(this.geminiInferenceEnabled, async () => {
+      const requestBinding = binding ?? this.captureBoundSnapshot();
+      await this.performAnnotationRequest(clickX, clickY, clickWorldPosAtClick, requestBinding);
+    });
+  }
+
+  private async performAnnotationRequest(
+    clickX: number,
+    clickY: number,
+    clickWorldPosAtClick: THREE.Vector3 | null,
+    binding: SnapshotBinding,
   ): Promise<void> {
     // Identity of this request: its snapshot's world, not whatever is live later.
     const generation = binding.snapshot.worldGeneration;

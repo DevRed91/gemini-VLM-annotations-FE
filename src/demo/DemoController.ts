@@ -61,6 +61,7 @@ export interface DemoHost {
 }
 
 export interface DemoOptions {
+  inferenceEnabled?: boolean;
   mode?: InferenceMode;
   delayMs?: number;
   handBox?: NormalizedBox;
@@ -145,6 +146,7 @@ export class DemoController {
   private lastHudAt = -Infinity;
   private requestText = "idle";
   private liveMode: "hits" | "ray";
+  private readonly inferenceEnabled: boolean;
   private liveIntervalMs: number;
   private snapshotVisible = true;
   private liveVisible = true;
@@ -157,6 +159,7 @@ export class DemoController {
 
   constructor(host: DemoHost, options: DemoOptions = {}) {
     this.host = host;
+    this.inferenceEnabled = options.inferenceEnabled ?? true;
     this.liveMode = options.liveMode ?? "ray";
     this.staticInitialized = options.staticInitialized ?? (() => true);
     this.liveIntervalMs = options.liveIntervalMs ?? 0;
@@ -339,7 +342,11 @@ export class DemoController {
     };
     this.cost.reset();
     this.liveHits = [];
-    this.requestText = this.seam.config().mode === 3 ? "scripted box (no model call)" : "request sent…";
+    this.requestText = !this.inferenceEnabled
+      ? "disabled by demo config"
+      : this.seam.config().mode === 3
+        ? "scripted box (no model call)"
+        : "request sent…";
     this.rebuildSnapshotRays();
     this.overlay.setSnapshotVisible(this.snapshotVisible);
     this.overlay.setLiveVisible(this.liveVisible);
@@ -577,6 +584,7 @@ export class DemoController {
       mode: cfg.mode,
       modeLabel: modeLabel(cfg),
       modeNote: modeNote(cfg),
+      inferenceEnabled: this.inferenceEnabled,
       annotationToolOn: this.host.isSelecting,
       snapshot: active
         ? {
@@ -940,6 +948,7 @@ export class DemoController {
     const active = this.active;
     return {
       mode: this.seam.config().mode,
+      inferenceEnabled: this.inferenceEnabled,
       hasSnapshot: active !== null,
       snapshotId: active?.binding.snapshot.id ?? null,
       box: active?.box ?? null,
