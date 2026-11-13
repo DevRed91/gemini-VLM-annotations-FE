@@ -1328,8 +1328,8 @@ export async function loadWorld(url: string) {
 }
 
 // Initial load
-// const initialURL = "/Apartment.sog";
-const initialURL = "/office_space.sog";
+const initialURL = "/Apartment.sog";
+// const initialURL = "/office_space.sog";
 // const initialURL = "/BiltmoreGaussianSplat.sog";
 void loadWorld(initialURL).catch((error) => console.error("Initial world load failed:", error));
 
@@ -1397,4 +1397,10 @@ if (import.meta.env.DEV) {
     },
     async load(url: string) { return viewer.loadWorld(url); },
   };
+}
+
+// DEV-only demo-recording harness (src/demo/). Opt-in via ?demo=1; the dynamic
+// import is dead code in production builds, so none of src/demo/ is bundled.
+if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("demo") === "1") {
+  void import("./demo/bootstrap.ts").then((module) => module.installDemo(viewer));
 }
