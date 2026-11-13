@@ -129,8 +129,10 @@ try {
       const viewer = window.__sl.viewer;
       const yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), spec.yaw);
       const q = yaw.multiply(new THREE.Quaternion().fromArray(home.rig.quaternion));
+      // Optional pitch about the rig's local X (negative looks down) for the Top view.
+      if (spec.pitch) q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), spec.pitch));
       viewer.cameraOrientTarget = null;
-      viewer.cameraRig.position.set(home.rig.position[0] + spec.dx, home.rig.position[1], home.rig.position[2] + spec.dz);
+      viewer.cameraRig.position.set(home.rig.position[0] + spec.dx, home.rig.position[1] + (spec.dy ?? 0), home.rig.position[2] + spec.dz);
       viewer.cameraRig.quaternion.copy(q);
       viewer.camera.quaternion.fromArray(home.cameraLocalQuaternion);
       viewer.camera.updateWorldMatrix(true, false);
@@ -139,7 +141,7 @@ try {
   const specs = {
     front: { yaw: 0, dx: 0, dz: 0 },
     side: { yaw: Math.PI / 2, dx: 0.6, dz: 0 },
-    rear: { yaw: Math.PI, dx: 0, dz: -0.6 },
+    top: { yaw: 0, dx: 0, dz: 0, dy: 1.2, pitch: -Math.PI / 2 },
   };
   const poseAtCapture = {};
 
@@ -152,16 +154,16 @@ try {
   check("capture confirmation shown", /Front view captured/.test(confirmation), confirmation);
   await page.screenshot({ path: `${outDir}/presentation-front-confirmation.png` });
 
-  // Side: real mouse click, assigned independently out of order relative to Rear.
+  // Side: real mouse click, assigned independently out of order relative to Top.
   await setPose(specs.side);
   await settle(page);
   poseAtCapture.side = await page.evaluate(() => window.__demo.readPose());
   await page.getByRole("button", { name: /Capture Side/ }).click();
 
-  // Rear: keyboard shortcut (Shift+3).
-  await setPose(specs.rear);
+  // Top: keyboard shortcut (Shift+3).
+  await setPose(specs.top);
   await settle(page);
-  poseAtCapture.rear = await page.evaluate(() => window.__demo.readPose());
+  poseAtCapture.top = await page.evaluate(() => window.__demo.readPose());
   await page.keyboard.press("Shift+Digit3");
   await page.waitForTimeout(300);
 
@@ -177,11 +179,11 @@ try {
         image: c.snapshot.image.dataUrl, width: c.snapshot.image.width, height: c.snapshot.image.height,
       }),
       uiCount: document.querySelector(".pres__count")?.textContent,
-      thumbSrc: ["front", "side", "rear"].map((s) => document.querySelector(`[data-slot=${s}] img`)?.src ?? null),
+      thumbSrc: ["front", "side", "top"].map((s) => document.querySelector(`[data-slot=${s}] img`)?.src ?? null),
     };
   });
   check("three viewpoints captured, count shows 3 / 3", captured.count === 3 && captured.uiCount === "3 / 3 captured", captured.uiCount);
-  check("slots assigned independently as chosen", captured.captures.map((c) => c?.slot).join() === "front,side,rear");
+  check("slots assigned independently as chosen", captured.captures.map((c) => c?.slot).join() === "front,side,top");
   check("capture IDs unique", new Set(captured.captures.map((c) => c.id)).size === 3);
   check("timestamps recorded in capture order", captured.captures[0].capturedAtMs < captured.captures[1].capturedAtMs && captured.captures[1].capturedAtMs < captured.captures[2].capturedAtMs);
   check("each capture stores position, orientation and perspective projection", captured.captures.every((c) =>
@@ -190,7 +192,7 @@ try {
   check("the three recorded camera positions differ", [[0, 1], [1, 2], [0, 2]].every(([i, j]) => distinct(captured.captures[i].position, captured.captures[j].position) > 0.3));
   const dq = (a, b) => Math.abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
   check("the three recorded orientations differ", [[0, 1], [1, 2], [0, 2]].every(([i, j]) => dq(captured.captures[i].orientation, captured.captures[j].orientation) < 0.9));
-  const keys = ["front", "side", "rear"];
+  const keys = ["front", "side", "top"];
   const worldPos = (pose) => ({ x: pose.position[0], y: pose.position[1], z: pose.position[2] });
   check("recorded pose equals the live camera pose at the moment of capture", keys.every((key, i) =>
     distinct(captured.captures[i].position, worldPos(poseAtCapture[key])) < 1e-3),
@@ -208,7 +210,7 @@ try {
       images: state.captures.map((c) => c.snapshot.image.dataUrl),
       poses: state.captures.map((c) => c.snapshot.camera.worldMatrix.join()),
       ids: state.captures.map((c) => c.id),
-      thumbSrc: ["front", "side", "rear"].map((s) => document.querySelector(`[data-slot=${s}] img`)?.src ?? null),
+      thumbSrc: ["front", "side", "top"].map((s) => document.querySelector(`[data-slot=${s}] img`)?.src ?? null),
       frozen: state.captures.every((c) => Object.isFrozen(c) && Object.isFrozen(c.snapshot)),
     };
   });
@@ -259,7 +261,7 @@ try {
     }, { stored: captured.captures.map((c) => c.image) });
     matrix.push(row);
   }
-  console.log("mean abs pixel diff (rows: re-render at recorded pose; cols: stored front/side/rear)");
+  console.log("mean abs pixel diff (rows: re-render at recorded pose; cols: stored front/side/top)");
   for (const row of matrix) console.log("  " + row.map((v) => v.toFixed(2).padStart(7)).join(" "));
   for (let i = 0; i < 3; i++) {
     const own = matrix[i][i];
@@ -291,13 +293,13 @@ try {
   const final = await page.evaluate(() => {
     const state = window.__demo.state().presentation;
     return {
-      front: state.captures[0].id, rear: state.captures[2].id,
+      front: state.captures[0].id, top: state.captures[2].id,
       side: state.captures[1].id,
       counters: window.__demo.counters,
       overlayVisible: window.__demo.state().overlayVisible,
     };
   });
-  check("re-capture replaced only Side", final.front === captured.captures[0].id && final.rear === captured.captures[2].id && final.side !== captured.captures[1].id);
+  check("re-capture replaced only Side", final.front === captured.captures[0].id && final.top === captured.captures[2].id && final.side !== captured.captures[1].id);
   check("presentation captures do not touch the annotation pipeline counters", final.counters.captures === 0 && final.counters.adopted === 0, JSON.stringify(final.counters));
   check("demo overlays visible again after capture", final.overlayVisible === true);
   check("presentation: no page errors", errors.length === 0, errors.join(" | "));

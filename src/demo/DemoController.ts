@@ -974,7 +974,7 @@ export class DemoController {
         KeyP: () => this.logPose(),
         KeyT: () => this.cycleStages(),
         KeyF: () => this.cycleCaptions(),
-        // Presentation mode only: Shift+1/2/3 assign the current view to Front/Side/Rear.
+        // Presentation mode only: Shift+1/2/3 assign the current view to Front/Side/Top.
         ...(this.presentationPanel
           ? Object.fromEntries(CAPTURE_SLOTS.map((slot) => [slot.key, () => void this.capturePresentationSlot(slot.id)]))
           : {}),

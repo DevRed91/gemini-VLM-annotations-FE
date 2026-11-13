@@ -1426,3 +1426,12 @@ if (import.meta.env.DEV) {
 if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("demo") === "1") {
   void import("./demo/bootstrap.ts").then((module) => module.installDemo(viewer));
 }
+
+// DEV-only geometry-guided segmentation experiment (src/segmentation/). Opt-in via
+// ?seg=1 (needs ?demo=1&present=1 for the Front/Side/Top captures); dead code in
+// production builds, so none of src/segmentation/ is bundled.
+if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("seg") === "1") {
+  void import("./segmentation/bootstrap.ts").then((module) =>
+    module.installSegmentation(viewer, API_BASE_URL, BYPASS_TUNNEL_REMINDER),
+  );
+}

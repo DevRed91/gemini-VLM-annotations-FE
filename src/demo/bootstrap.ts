@@ -10,7 +10,7 @@ import { isDemoInferenceSuppressed } from "../utils/inferenceSuppression.ts";
  * in src/script.ts, so a production build contains none of src/demo/.
  *
  * URL parameters (all optional):
- *   present=1           presentation mode: hide the engineering HUD, show the Front/Side/Rear capture UI
+ *   present=1           presentation mode: hide the engineering HUD, show the Front/Side/Top capture UI
  *   mode=1|2|3          inference mode (default 1)
  *   inference=off       suppress scene-click Gemini requests; snapshots and measurements remain active
  *   delay=<ms>          mode 2 artificial delay (default 4000)

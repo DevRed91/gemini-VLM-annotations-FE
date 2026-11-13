@@ -187,7 +187,7 @@ describe("Scene F captions", () => {
   test("carries the required headline and NOT YET IMPLEMENTED label; three view slots", () => {
     assert.equal(SCENE_F_HEADLINE, "Next research phase: Multi-view Object Association");
     assert.equal(SCENE_F_BADGE, "NOT YET IMPLEMENTED");
-    assert.deepEqual(SCENE_F_SLOTS.map((s) => s.id), ["front", "side", "rear"]);
+    assert.deepEqual(SCENE_F_SLOTS.map((s) => s.id), ["front", "side", "top"]);
     for (const slot of SCENE_F_SLOTS) assert.ok(slot.demonstrates.length > 20);
   });
 
@@ -209,14 +209,14 @@ describe("Scene F captions", () => {
   test("rejects malformed poses and unknown slots", () => {
     const c = new SceneFCaptions(null);
     assert.throws(() => c.bind("front", { position: [1, 2], quaternion: [0, 0, 0, 1] } as never), TypeError);
-    assert.throws(() => c.bind("top" as never, logged), RangeError);
+    assert.throws(() => c.bind("bottom" as never, logged), RangeError);
   });
 
   test("bindings persist through storage and survive corrupt storage", () => {
     const store = new Map<string, string>();
     const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
-    new SceneFCaptions(storage).bind("rear", logged);
-    assert.equal(new SceneFCaptions(storage).get("rear")?.position[0], 1);
+    new SceneFCaptions(storage).bind("top", logged);
+    assert.equal(new SceneFCaptions(storage).get("top")?.position[0], 1);
     store.set([...store.keys()][0], "{not json");
     assert.equal(new SceneFCaptions(storage).boundCount(), 0);
   });

@@ -14,7 +14,7 @@
 export const SCENE_F_HEADLINE = "Next research phase: Multi-view Object Association";
 export const SCENE_F_BADGE = "NOT YET IMPLEMENTED";
 
-export type SceneFSlotId = "front" | "side" | "rear";
+export type SceneFSlotId = "front" | "side" | "top";
 
 export interface SceneFSlot {
   readonly id: SceneFSlotId;
@@ -37,10 +37,10 @@ export const SCENE_F_SLOTS: readonly SceneFSlot[] = [
       "The same object from another viewpoint. Recognising it as the front-view annotation's object is open research.",
   },
   {
-    id: "rear",
-    title: "Rear view",
+    id: "top",
+    title: "Top view",
     demonstrates:
-      "The same object from behind: surfaces never seen from the front. Linking this view to the others is open research.",
+      "The same object from above: surfaces never seen from the front. Linking this view to the others is open research.",
   },
 ];
 

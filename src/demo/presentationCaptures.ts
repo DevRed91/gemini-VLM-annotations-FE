@@ -7,7 +7,7 @@ import { validateViewSnapshot, type ViewSnapshot } from "../viewer/ViewSnapshot.
 export const CAPTURE_SLOTS = [
   { id: "front", title: "Front", key: "Digit1" },
   { id: "side", title: "Side", key: "Digit2" },
-  { id: "rear", title: "Rear", key: "Digit3" },
+  { id: "top", title: "Top", key: "Digit3" },
 ] as const;
 
 export type CaptureSlotId = (typeof CAPTURE_SLOTS)[number]["id"];
@@ -61,7 +61,7 @@ export class PresentationCaptureStore {
     return this.captures.get(slot) ?? null;
   }
 
-  /** Captures in slot order (Front, Side, Rear); empty slots are null. */
+  /** Captures in slot order (Front, Side, Top); empty slots are null. */
   slots(): (PresentationCapture | null)[] {
     return CAPTURE_SLOTS.map((slot) => this.get(slot.id));
   }

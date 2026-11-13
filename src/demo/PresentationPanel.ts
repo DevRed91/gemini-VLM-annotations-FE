@@ -9,7 +9,7 @@ import { CAPTURE_SLOTS, type CaptureSlotId, type PresentationCapture } from "./p
 
 export interface PresentationModel {
   sceneLabel: string;
-  /** Slot order: Front, Side, Rear. */
+  /** Slot order: Front, Side, Top. */
   captures: readonly (PresentationCapture | null)[];
 }
 

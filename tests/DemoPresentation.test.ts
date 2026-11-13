@@ -153,17 +153,17 @@ describe("presentation capture store", () => {
       const side = store.assign("side", take(1), 1_000);
       assert.equal(store.count(), 1);
       assert.deepEqual(store.slots().map((c) => c?.slot ?? null), [null, "side", null], "slot order is fixed, not pose-derived");
-      const rear = store.assign("rear", take(2), 2_000);
+      const top = store.assign("top", take(2), 2_000);
       const front = store.assign("front", take(3), 3_000);
       assert.equal(store.count(), 3);
-      assert.equal(new Set([front.id, side.id, rear.id]).size, 3, "unique capture IDs");
+      assert.equal(new Set([front.id, side.id, top.id]).size, 3, "unique capture IDs");
       assert.equal(front.capturedAtIso, new Date(3_000).toISOString());
 
       const sideAgain = store.assign("side", take(4), 4_000);
       assert.equal(store.count(), 3, "re-capturing a slot does not add a fourth");
       assert.notEqual(sideAgain.id, side.id);
       assert.equal(store.get("front"), front, "other slots untouched");
-      assert.equal(store.get("rear"), rear);
+      assert.equal(store.get("top"), top);
     } finally { env.restore(); }
   });
 
@@ -184,7 +184,7 @@ describe("presentation capture store", () => {
       assert.equal(poseOf(capture.snapshot), beforePose);
       assert.ok(Object.isFrozen(capture) && Object.isFrozen(capture.snapshot) && Object.isFrozen(capture.snapshot.camera));
       assert.deepEqual(capture.snapshot.camera.position, { x: 0, y: 0, z: -3 });
-      assert.throws(() => { (capture as { slot: string }).slot = "rear"; }, TypeError);
+      assert.throws(() => { (capture as { slot: string }).slot = "top"; }, TypeError);
     } finally { env.restore(); }
   });
 
@@ -194,8 +194,8 @@ describe("presentation capture store", () => {
       const h = makeHost();
       const store = new PresentationCaptureStore();
       const good = store.assign("front", h.host.captureViewSnapshot(), 1);
-      assert.throws(() => store.assign("top" as never, h.host.captureViewSnapshot(), 2), RangeError);
-      assert.throws(() => store.assign("rear", { id: "x" } as never, 2), TypeError);
+      assert.throws(() => store.assign("bottom" as never, h.host.captureViewSnapshot(), 2), RangeError);
+      assert.throws(() => store.assign("top", { id: "x" } as never, 2), TypeError);
       assert.equal(store.count(), 1);
       assert.equal(store.get("front"), good);
     } finally { env.restore(); }
@@ -286,30 +286,30 @@ describe("presentation mode in the demo controller (fake DOM)", () => {
     assert.equal(afterFirst.captures[0], null, "Front untouched");
     assert.ok(afterFirst.captures[1], "Side filled");
 
-    h.rig.position.set(4, 0, -3); env.key("Digit3"); // Shift+3 → Rear
+    h.rig.position.set(4, 0, -3); env.key("Digit3"); // Shift+3 → Top
     h.rig.position.set(-4, 1, 2); button("Front").click();
 
-    const [front, side, rear] = d.state().presentation!.captures;
+    const [front, side, top] = d.state().presentation!.captures;
     assert.equal(d.state().presentation!.count, 3);
-    assert.deepEqual([front!.slot, side!.slot, rear!.slot], ["front", "side", "rear"]);
+    assert.deepEqual([front!.slot, side!.slot, top!.slot], ["front", "side", "top"]);
     assert.deepEqual(front!.snapshot.camera.position, { x: -4, y: 1, z: 2 });
     assert.deepEqual(side!.snapshot.camera.position, { x: 0, y: 0, z: -3 });
-    assert.deepEqual(rear!.snapshot.camera.position, { x: 4, y: 0, z: -3 });
+    assert.deepEqual(top!.snapshot.camera.position, { x: 4, y: 0, z: -3 });
     // Each stored image was rendered from exactly its recorded pose.
-    for (const capture of [front!, side!, rear!]) {
+    for (const capture of [front!, side!, top!]) {
       const encoded = poseOf(capture.snapshot).split(",").map(Number);
       capture.snapshot.camera.worldMatrix.forEach((v, i) => assert.ok(Math.abs(v - encoded[i]) < 1e-5));
     }
-    assert.equal(new Set([front!.id, side!.id, rear!.id]).size, 3);
+    assert.equal(new Set([front!.id, side!.id, top!.id]).size, 3);
 
-    const thumbs = ["front", "side", "rear"].map((s) => thumb(s).src);
+    const thumbs = ["front", "side", "top"].map((s) => thumb(s).src);
     const before = JSON.stringify(d.state().presentation);
 
     // Move the camera a lot; nothing captured changes.
     for (let i = 0; i < 20; i++) { h.rig.position.x += 0.5; h.rig.rotateY(0.1); }
     h.host.captureViewSnapshot();
     assert.equal(JSON.stringify(d.state().presentation), before);
-    assert.deepEqual(["front", "side", "rear"].map((s) => thumb(s).src), thumbs);
+    assert.deepEqual(["front", "side", "top"].map((s) => thumb(s).src), thumbs);
     assert.equal(new Set(thumbs).size, 3, "three distinct thumbnails");
     assert.match(text(panelRoot()), /3 \/ 3 captured/);
   });
@@ -362,8 +362,8 @@ describe("presentation mode in the demo controller (fake DOM)", () => {
   test("confirmation names the slot; captures from a replaced world are dropped", () => {
     const h = makeHost();
     const d = create(h, { presentation: true });
-    button("Rear").click();
-    assert.match(text(panelRoot()), /Rear view captured/);
+    button("Top").click();
+    assert.match(text(panelRoot()), /Top view captured/);
     h.state.generation = 2;
     (d as unknown as { refreshHud(force: boolean): void }).refreshHud(true);
     assert.equal(d.state().presentation!.count, 0);
