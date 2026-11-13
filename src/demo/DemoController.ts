@@ -24,6 +24,7 @@ import { poseChange, type CameraSample } from "./settle.ts";
 import { SettledMeasurer, type CastResult, type SettledMeasurement } from "./settledMeasurement.ts";
 import { SettledOverlay } from "./SettledOverlay.ts";
 import { PresentationPanel } from "./PresentationPanel.ts";
+import { MultiViewDetectionWorkflow, requestMultiViewDetections } from "./multiViewDetection.ts";
 import {
   CAPTURE_SLOTS,
   PresentationCaptureStore,
@@ -96,6 +97,9 @@ export interface DemoOptions {
   storage?: import("./sceneCaptions.ts").KeyValueStorage | null;
   /** Minimum ms between live-ray updates; 0 = every rendered frame. */
   liveIntervalMs?: number;
+  /** Backend base URL (for example `/api` or `https://host.example`). */
+  apiBaseUrl?: string;
+  bypassTunnelReminder?: boolean;
 }
 
 export interface PoseRecord {
@@ -143,6 +147,9 @@ export class DemoController {
   private readonly captureCleanFrame: () => ViewSnapshot;
   private readonly presentationStore = new PresentationCaptureStore();
   private presentationPanel: PresentationPanel | null = null;
+  private readonly multiViewEndpoint: string;
+  private readonly multiViewHeaders: Record<string, string>;
+  private readonly multiViewWorkflow = new MultiViewDetectionWorkflow();
   private readonly cleanups: Array<() => void> = [];
   private active: ActiveSnapshot | null = null;
   private pendingSnapshot: ViewSnapshot | null = null;
@@ -180,6 +187,8 @@ export class DemoController {
 
   constructor(host: DemoHost, options: DemoOptions = {}) {
     this.host = host;
+    this.multiViewEndpoint = buildMultiViewEndpoint(options.apiBaseUrl ?? "/api");
+    this.multiViewHeaders = options.bypassTunnelReminder ? { "bypass-tunnel-reminder": "true" } : {};
     this.inferenceEnabled = options.inferenceEnabled ?? true;
     this.liveMode = options.liveMode ?? "ray";
     this.staticInitialized = options.staticInitialized ?? (() => true);
@@ -281,7 +290,14 @@ export class DemoController {
     if (options.presentation) {
       // Engineering HUD hidden only here; normal demo mode never reaches this.
       this.hud.setVisible(false);
-      this.presentationPanel = new PresentationPanel({ capture: (slot) => void this.capturePresentationSlot(slot) });
+      this.presentationPanel = new PresentationPanel({
+        capture: (slot) => void this.capturePresentationSlot(slot),
+        sendToGemini: () => void this.sendPresentationCapturesToGemini(),
+        selectObject: (id) => this.selectMultiViewObject(id),
+        continueWithSelectedObject: () => this.confirmMultiViewSelection(),
+        closeReview: () => { this.multiViewWorkflow.closeReview(); this.syncPresentation(); },
+        openReview: () => { this.multiViewWorkflow.openReview(); this.syncPresentation(); },
+      });
       this.cleanups.push(() => {
         this.presentationPanel?.dispose();
         this.presentationPanel = null;
@@ -294,6 +310,7 @@ export class DemoController {
 
     this.installListeners();
     this.refreshHud(true);
+    if (this.presentationPanel) this.syncPresentation();
   }
 
   // ---------------------------------------------------------------- config
@@ -360,6 +377,7 @@ export class DemoController {
       return null;
     }
     try {
+      this.invalidateMultiViewReview();
       const snapshot = this.captureCleanFrame();
       const capture = this.presentationStore.assign(slot, snapshot, Date.now());
       this.counters.presentationCaptures++;
@@ -376,11 +394,53 @@ export class DemoController {
   private syncPresentation(): void {
     const panel = this.presentationPanel;
     if (!panel) return;
-    this.presentationStore.dropOtherWorlds(this.host.liveWorldState().worldGeneration);
+    const dropped = this.presentationStore.dropOtherWorlds(this.host.liveWorldState().worldGeneration);
+    if (dropped > 0) this.invalidateMultiViewReview();
     panel.render({
       sceneLabel: sceneLabelFromUrl(this.host.currentWorldUrl),
       captures: this.presentationStore.slots(),
+      ...this.multiViewWorkflow.state(),
     });
+  }
+
+  private invalidateMultiViewReview(): void {
+    this.multiViewWorkflow.invalidate();
+  }
+
+  private async sendPresentationCapturesToGemini(): Promise<void> {
+    if (this.multiViewWorkflow.state().detectionLoading) return;
+    const captures = this.presentationStore.slots();
+    if (!this.multiViewWorkflow.canSend(captures)) {
+      this.multiViewWorkflow.showError("Capture Front, Side and Top before sending to Gemini.");
+      this.syncPresentation();
+      return;
+    }
+    const requestId = this.multiViewWorkflow.beginRequest();
+    if (requestId === null) return;
+    this.syncPresentation();
+    try {
+      const detections = await requestMultiViewDetections(
+        this.multiViewEndpoint,
+        captures as PresentationCapture[],
+        this.multiViewHeaders,
+        { fetch: this.originalFetch },
+      );
+      this.multiViewWorkflow.resolveRequest(requestId, detections);
+    } catch (error) {
+      this.multiViewWorkflow.rejectRequest(requestId, error instanceof Error ? error.message : "Gemini detection failed. Your captures are still available; retry when ready.");
+    } finally {
+      this.syncPresentation();
+    }
+  }
+
+  private selectMultiViewObject(id: string): void {
+    if (!this.multiViewWorkflow.select(id)) return;
+    this.syncPresentation();
+  }
+
+  private confirmMultiViewSelection(): void {
+    this.multiViewWorkflow.confirm(this.presentationStore.slots());
+    this.syncPresentation();
   }
 
   private adoptPendingSnapshot(): void {
@@ -1051,7 +1111,11 @@ export class DemoController {
       liveIntervalMs: this.liveIntervalMs,
       overlayVisible: this.root.visible,
       presentation: this.presentationPanel
-        ? { captures: this.presentationStore.slots(), count: this.presentationStore.count() }
+        ? {
+            captures: this.presentationStore.slots(),
+            count: this.presentationStore.count(),
+            ...this.multiViewWorkflow.state(),
+          }
         : null,
       pendingRequests: this.seam.pendingCount(),
       stage: this.stages.stage(),
@@ -1088,4 +1152,12 @@ function modeNote(cfg: Readonly<InferenceConfig>): string {
     case 3:
       return `Scripted box [${cfg.handBox.map((v) => v.toFixed(2)).join(", ")}] replaces the model. Sampling, DBSCAN, OBB and lifting are the real pipeline.`;
   }
+}
+
+function buildMultiViewEndpoint(baseUrl: string): string {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  if (normalized.endsWith("/detect-multiview")) return normalized;
+  if (normalized.endsWith("/api")) return `${normalized}/detect-multiview`;
+  if (normalized.startsWith("http")) return `${normalized}/api/detect-multiview`;
+  return `${normalized}/detect-multiview`;
 }

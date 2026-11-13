@@ -41,7 +41,7 @@ function parseOptions(search: string): DemoOptions {
   return options;
 }
 
-export function installDemo(viewer: unknown): DemoController {
+export function installDemo(viewer: unknown, apiBaseUrl = "/api", bypassTunnelReminder = false): DemoController {
   if (!import.meta.env.DEV) throw new Error("The demo harness is development-only");
   const existing = (window as unknown as { __demo?: DemoController }).__demo;
   existing?.dispose();
@@ -50,6 +50,8 @@ export function installDemo(viewer: unknown): DemoController {
   const host = viewer as DemoHost & { liveWorldState(): ReturnType<DemoHost["liveWorldState"]> };
   const controller = new DemoController(host, {
     ...parseOptions(window.location.search),
+    apiBaseUrl,
+    bypassTunnelReminder,
     // Real Spark readiness flag; raycast silently returns no hits until it is true.
     staticInitialized: () => SplatMesh.isStaticInitialized,
   });

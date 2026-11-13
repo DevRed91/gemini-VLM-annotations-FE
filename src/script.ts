@@ -1424,7 +1424,7 @@ if (import.meta.env.DEV) {
 // DEV-only demo-recording harness (src/demo/). Opt-in via ?demo=1; the dynamic
 // import is dead code in production builds, so none of src/demo/ is bundled.
 if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("demo") === "1") {
-  void import("./demo/bootstrap.ts").then((module) => module.installDemo(viewer));
+  void import("./demo/bootstrap.ts").then((module) => module.installDemo(viewer, API_BASE_URL, BYPASS_TUNNEL_REMINDER));
 }
 
 // DEV-only geometry-guided segmentation experiment (src/segmentation/). Opt-in via
