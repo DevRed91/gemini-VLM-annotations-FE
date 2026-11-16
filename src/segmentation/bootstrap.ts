@@ -2,6 +2,7 @@ import { buildEndpoint, makeBoxDetector, makeSegmentFetcher } from "./client.ts"
 import type { ViewInput } from "./experiment.ts";
 import { SegmentationController, type SegmentationHost } from "./SegmentationController.ts";
 import { SegmentationPanel } from "./SegmentationPanel.ts";
+import type { MultiViewObjectDetection, SelectedMultiViewObject } from "../demo/multiViewDetection.ts";
 import type { ViewSnapshot } from "../viewer/ViewSnapshot.ts";
 
 /**
@@ -15,7 +16,13 @@ import type { ViewSnapshot } from "../viewer/ViewSnapshot.ts";
  */
 
 interface DemoLike {
-  state(): { presentation: { captures: ({ slot: string; snapshot: ViewSnapshot } | null)[] } | null };
+  state(): {
+    presentation: {
+      captures: ({ slot: string; snapshot: ViewSnapshot } | null)[];
+      selectedObject?: SelectedMultiViewObject | null;
+      detections?: readonly MultiViewObjectDetection[];
+    } | null;
+  };
 }
 
 export interface SegmentationHandle {
@@ -40,6 +47,10 @@ export function installSegmentation(viewer: unknown, apiBase: string, bypassTunn
   const controller = new SegmentationController({
     host,
     getCaptures,
+    getSemanticSelection: () => {
+      const presentation = ((window as unknown as { __demo?: DemoLike }).__demo)?.state().presentation;
+      return presentation ? { selected: presentation.selectedObject ?? null, detections: presentation.detections ?? [] } : null;
+    },
     segment: makeSegmentFetcher(buildEndpoint(apiBase, "segment"), fetchImpl, bypassTunnelReminder),
     detectBox: makeBoxDetector(buildEndpoint(apiBase, "annotate"), fetchImpl, bypassTunnelReminder),
   });

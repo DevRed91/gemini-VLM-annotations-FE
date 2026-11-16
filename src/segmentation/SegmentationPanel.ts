@@ -9,7 +9,7 @@ import type { SegmentationController, SegmentationState } from "./SegmentationCo
  */
 
 const CSS = `
-.seg{position:fixed;left:12px;top:12px;z-index:2100;width:330px;max-height:calc(100vh - 24px);overflow:auto;padding:10px;border-radius:12px;background:rgba(10,13,18,.86);border:1px solid rgba(255,255,255,.18);color:#f4f7fb;font:12px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;backdrop-filter:blur(8px)}
+.seg{position:fixed;right:12px;top:12px;z-index:2100;width:min(330px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;padding:10px;border-radius:12px;background:rgba(10,13,18,.86);border:1px solid rgba(255,255,255,.18);color:#f4f7fb;font:12px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;backdrop-filter:blur(8px)}
 .seg *{box-sizing:border-box}
 .seg h3{margin:0 0 6px;font-size:13px}
 .seg__row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}
@@ -98,6 +98,7 @@ export class SegmentationPanel {
       el("span", undefined, `Anchor (${fmt(p.x, 2)}, ${fmt(p.y, 2)}, ${fmt(p.z, 2)}) · ${a.refinement.hitCount}/${a.refinement.probeCount} rays · spread ${fmt(a.refinement.spread)}`),
       el("span", a.refinement.stable ? undefined : "seg__warn", a.refinement.stable ? "· stable" : "· UNSTABLE"),
       el("span", "seg__note", `· ${state.captureCount}/3 views`),
+      el("span", a.source === "semantic-verified" ? undefined : "seg__note", a.source === "semantic-verified" ? `· Gemini "${a.semantic?.semantic.label}" verified by ${a.semantic?.anchor.verification.corroboratingViews.join("+")}` : "· user click"),
     );
     return line;
   }
@@ -108,6 +109,9 @@ export class SegmentationPanel {
     const buttons = el("div", "seg__row");
     const pick = el("button", state.picking ? "is-on" : undefined, state.picking ? "Click the object…" : "Pick anchor");
     pick.addEventListener("click", () => this.controller.setPicking(!state.picking));
+    const semantic = el("button", undefined, "Use selected Gemini object");
+    semantic.title = "Derive and verify a 3D anchor from the confirmed Gemini object; falls back to Pick anchor if it cannot be verified";
+    semantic.addEventListener("click", () => this.controller.adoptSelectedObject());
     const run = el("button", undefined, state.running ? "Running…" : "Run");
     run.disabled = state.running || !state.anchor || state.captureCount === 0;
     run.addEventListener("click", () => void this.controller.run());
@@ -116,7 +120,7 @@ export class SegmentationPanel {
     exportButton.addEventListener("click", () => this.download());
     const clear = el("button", undefined, "Clear");
     clear.addEventListener("click", () => this.controller.clear());
-    buttons.append(pick, run, exportButton, clear);
+    buttons.append(pick, semantic, run, exportButton, clear);
 
     const text = el("input");
     text.type = "text";

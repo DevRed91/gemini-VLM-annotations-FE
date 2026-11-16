@@ -1,5 +1,6 @@
 import * as THREE from "three";
 
+import type { MultiViewObjectDetection, SelectedMultiViewObject } from "../demo/multiViewDetection.ts";
 import type { LiveWorldState } from "../viewer/SnapshotBinding.ts";
 import type { SegmentRequest, SegmentResponse, PixelBox } from "./contract.ts";
 import {
@@ -17,6 +18,12 @@ import {
   type AnchorRefinement,
   type CastFn,
 } from "./geometry.ts";
+import {
+  associateSemanticTarget,
+  summarizeHandoff,
+  type AssociationOutcome,
+  type SemanticGeometricHandoff,
+} from "./semanticAnchor.ts";
 
 /** The slice of SplatViewer this tool reads (private in TS; one cast in bootstrap). */
 export interface SegmentationHost {
@@ -37,9 +44,20 @@ export interface SegmentationDeps {
   readonly makeCaster?: (splat: THREE.Object3D) => CastFn;
   /** Radius of the probe ring around the click, in CSS pixels. */
   readonly probeRadiusPx?: number;
+  /** The confirmed Gemini selection (and every detection of that response), if the demo has one. */
+  readonly getSemanticSelection?: () => SemanticSelection | null;
+}
+
+export interface SemanticSelection {
+  readonly selected: SelectedMultiViewObject | null;
+  readonly detections: readonly MultiViewObjectDetection[];
 }
 
 export interface AnchorPick {
+  /** "user-click": picked by hand. "semantic-verified": derived from a Gemini selection and geometrically verified. */
+  readonly source: "user-click" | "semantic-verified";
+  /** Present only for "semantic-verified"; carries the semantic target, verification and retained captures. */
+  readonly semantic?: SemanticGeometricHandoff;
   readonly refinement: AnchorRefinement;
   /** Click position, fractions of the canvas (top-left origin). */
   readonly click: { u: number; v: number };
@@ -178,6 +196,7 @@ export class SegmentationController {
     }
     const position = host.camera.getWorldPosition(new THREE.Vector3());
     this.anchor = {
+      source: "user-click",
       refinement,
       click: { u, v },
       cameraPosition: { x: position.x, y: position.y, z: position.z },
@@ -192,6 +211,60 @@ export class SegmentationController {
     return this.anchor;
   }
 
+  /**
+   * Hand the confirmed Gemini object to the pipeline. Succeeds ONLY with a
+   * geometrically verified anchor (see semanticAnchor.ts); otherwise nothing is
+   * adopted, the reason is shown, and the user-click workflow remains the
+   * fallback. A box centre is never substituted.
+   */
+  adoptSelectedObject(): AssociationOutcome | null {
+    const { host } = this.deps;
+    const selection = this.deps.getSemanticSelection?.();
+    if (!selection?.selected) {
+      this.status = "No confirmed Gemini object: select one and press Continue first (or pick an anchor by click).";
+      this.emit();
+      return null;
+    }
+    const splat = host.currentSplat;
+    if (!splat || !host.splatLoaded) {
+      this.status = "Scene not ready: no splat loaded.";
+      this.emit();
+      return null;
+    }
+    let outcome: AssociationOutcome;
+    try {
+      outcome = associateSemanticTarget(selection.selected, selection.detections, {
+        live: host.liveWorldState(),
+        cast: (this.deps.makeCaster ?? createSplatCaster)(splat),
+      });
+    } catch (error) {
+      this.status = `Association failed: ${(error as Error).message}. Pick an anchor by click instead.`;
+      this.emit();
+      return null;
+    }
+    if (outcome.status === "rejected") {
+      this.status = `"${selection.selected.label}" not geometrically verified (${outcome.reason}): ${outcome.message} Pick an anchor by click instead.`;
+      this.emit();
+      return outcome;
+    }
+    const { handoff } = outcome;
+    const position = host.camera.getWorldPosition(new THREE.Vector3());
+    this.anchor = {
+      source: "semantic-verified",
+      semantic: handoff,
+      refinement: handoff.anchor.refinement,
+      click: { u: NaN, v: NaN },
+      cameraPosition: { x: position.x, y: position.y, z: position.z },
+      pickedAt: handoff.anchor.verification.checkedAtIso,
+      worldGeneration: handoff.anchor.worldGeneration,
+    };
+    if (!this.text.trim()) this.text = handoff.semantic.label;
+    this.result = null;
+    this.status = `Anchor for "${handoff.semantic.label}" verified (${handoff.anchor.verification.corroboratingViews.join(", ")} corroborate). Run to project it into the retained captures.`;
+    this.emit();
+    return outcome;
+  }
+
   async run(): Promise<ExperimentResult | null> {
     if (this.running) return null;
     const anchor = this.anchorIfCurrent();
@@ -201,7 +274,8 @@ export class SegmentationController {
       this.emit();
       return null;
     }
-    const views = this.deps.getCaptures();
+    // A semantic anchor was verified against the exact captures Gemini saw; use those, not whatever the slots hold now.
+    const views = anchor.semantic ? [...anchor.semantic.views] : this.deps.getCaptures();
     if (views.length === 0) {
       this.status = "No captures: press Shift+1/2/3 in presentation mode (?demo=1&present=1).";
       this.emit();
@@ -262,8 +336,9 @@ export class SegmentationController {
 
   /** JSON-safe export of the last run plus the anchor provenance. Contains no images or masks. */
   exportResult(): unknown {
+    const { semantic, ...anchor } = this.anchor ?? ({} as Partial<AnchorPick>);
     return {
-      anchor: this.anchor,
+      anchor: this.anchor ? { ...anchor, ...(semantic ? { semantic: summarizeHandoff(semantic) } : {}) } : null,
       result: this.result ? exportExperiment(this.result) : null,
     };
   }
