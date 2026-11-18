@@ -1,6 +1,7 @@
 import type { SplatMesh } from "@sparkjsdev/spark";
 import { liftCluster } from "./clusterLifter";
 import type { ClusterLiftDiagnostics, ClusterLiftOptions } from "./clusterLifter";
+import { nonLodSplatRejectionReason } from "./gaussianIndexSupport";
 import { GaussianMaskManager } from "./gaussianMaskManager";
 import type {
   GaussianMaskSnapshot,
@@ -29,6 +30,47 @@ export interface GaussianObjectSelectionResult extends GaussianObjectSelectionSn
   mask: GaussianMaskUpdate;
 }
 
+export interface DirectIndexSelectionOptions {
+  /**
+   * World-space OBB to hand back when index lifting is unsupported (LOD / paged
+   * splat). The caller draws the wireframe/tint; no mask label is written.
+   */
+  fallbackObb?: OBB;
+}
+
+export interface DirectIndexSelectionResult {
+  /** Caller-supplied identity (e.g. a verified product ID). */
+  objectId: string;
+  /** Stable mask label in [1, 255]; 0 when mode is "obb-fallback" (no label was allocated). */
+  labelId: number;
+  /** Unique, in-range storage indices written to the mask. */
+  acceptedCount: number;
+  /** Non-integer or out-of-range inputs that were dropped. */
+  invalidCount: number;
+  /** Repeated in-range inputs that were collapsed. */
+  duplicateCount: number;
+  mode: "indices" | "obb-fallback";
+  color: [number, number, number] | null;
+  /** Why index lifting was refused (set only for "obb-fallback"). */
+  fallbackReason: string | null;
+  /** Cloned fallback OBB (set only for "obb-fallback"). */
+  fallbackObb: OBB | null;
+  mask: GaussianMaskUpdate | null;
+}
+
+export interface DirectIndexSelectionSnapshot {
+  objectId: string;
+  labelId: number;
+  color: [number, number, number];
+  selectedIds: Uint32Array;
+}
+
+interface StoredIndexSelection {
+  objectId: string;
+  selectedIds: Uint32Array;
+  requestGeneration: number;
+}
+
 interface StoredSelection {
   worldObb: OBB;
   selectedIds: Uint32Array;
@@ -42,6 +84,10 @@ interface StoredSelection {
  */
 export class GaussianObjectHighlighter {
   private readonly selections = new Map<GaussianObjectId, StoredSelection>();
+  /** Direct-index selections, keyed by mask label (labels share nextObjectId with select()). */
+  private readonly indexSelections = new Map<number, StoredIndexSelection>();
+  /** Stable string objectId -> label for this world. Never reassigned, so retired labels are never reused. */
+  private readonly labelByObjectId = new Map<string, number>();
   private queue: Promise<void> = Promise.resolve();
   private nextObjectId = 1;
   private worldGeneration = 0;
@@ -58,7 +104,7 @@ export class GaussianObjectHighlighter {
   ) {}
 
   get size(): number {
-    return this.selections.size;
+    return this.selections.size + this.indexSelections.size;
   }
 
   get isDisposed(): boolean {
@@ -109,15 +155,128 @@ export class GaussianObjectHighlighter {
     });
   }
 
+  /**
+   * Select exact storage indices (e.g. a multi-view Gaussian membership) under a
+   * caller-owned string ID. The same ID always maps to the same label. A null
+   * result means the request was invalidated by clear / clear-all / disposal
+   * before it could commit. Without options.fallbackObb, an unsupported (LOD /
+   * paged) splat rejects; with it, the OBB is returned and nothing is masked.
+   */
+  selectIndices(
+    objectId: string,
+    indices: Uint32Array | readonly number[],
+    options: DirectIndexSelectionOptions = {},
+  ): Promise<DirectIndexSelectionResult | null> {
+    if (this.disposed) return Promise.resolve(null);
+    if (typeof objectId !== "string" || objectId.length === 0) {
+      throw new TypeError("objectId must be a non-empty string");
+    }
+    if (!indices || !Number.isSafeInteger(indices.length) || indices.length < 0) {
+      throw new TypeError("indices must be an array-like collection of storage indices");
+    }
+    const fallbackObb = options.fallbackObb ? cloneObb(options.fallbackObb, "fallbackObb") : null;
+
+    const unsupported = nonLodSplatRejectionReason(this.splat);
+    if (unsupported) {
+      if (!fallbackObb) {
+        return Promise.reject(new Error(
+          `Gaussian index lifting supports only non-LOD, non-paged SplatMesh inputs (found ${unsupported})`,
+        ));
+      }
+      return Promise.resolve({
+        objectId,
+        labelId: 0,
+        acceptedCount: 0,
+        invalidCount: 0,
+        duplicateCount: 0,
+        mode: "obb-fallback",
+        color: null,
+        fallbackReason: unsupported,
+        fallbackObb,
+        mask: null,
+      });
+    }
+
+    // Validate, dedupe and sort synchronously so later caller mutation cannot alter a queued request.
+    const numSplats = this.mask.numSplats;
+    const unique = new Set<number>();
+    let invalidCount = 0;
+    let duplicateCount = 0;
+    for (let i = 0; i < indices.length; i++) {
+      const id = indices[i];
+      if (!Number.isSafeInteger(id) || id < 0 || id >= numSplats) invalidCount++;
+      else if (unique.has(id)) duplicateCount++;
+      else unique.add(id);
+    }
+    const cleanIndices = Uint32Array.from(unique).sort();
+
+    let labelId = this.labelByObjectId.get(objectId);
+    if (labelId === undefined) {
+      labelId = this.allocateObjectId();
+      this.labelByObjectId.set(objectId, labelId);
+    }
+    const label = labelId;
+    const existing = this.indexSelections.get(label);
+    const requestGeneration = existing?.requestGeneration ?? 0;
+    const worldGeneration = this.worldGeneration;
+
+    return this.enqueue(() => {
+      if (!this.isIndexRequestCurrent(label, requestGeneration, worldGeneration)) return null;
+      const maskUpdate = this.mask.replaceLabel(label, cleanIndices);
+      if (cleanIndices.length > 0) {
+        this.indexSelections.set(label, {
+          objectId,
+          selectedIds: cleanIndices,
+          requestGeneration: this.indexSelections.get(label)?.requestGeneration ?? requestGeneration,
+        });
+      } else {
+        this.indexSelections.delete(label);
+      }
+      return {
+        objectId,
+        labelId: label,
+        acceptedCount: cleanIndices.length,
+        invalidCount,
+        duplicateCount,
+        mode: "indices" as const,
+        color: this.mask.getLabelColor(label),
+        fallbackReason: null,
+        fallbackObb: null,
+        mask: maskUpdate,
+      };
+    });
+  }
+
+  /** Mask label assigned to a string object ID by selectIndices, if any. */
+  getLabelForObject(objectId: string): number | undefined {
+    return this.labelByObjectId.get(objectId);
+  }
+
+  getIndexSelection(objectId: string): DirectIndexSelectionSnapshot | undefined {
+    const label = this.labelByObjectId.get(objectId);
+    const selection = label === undefined ? undefined : this.indexSelections.get(label);
+    return label !== undefined && selection ? this.indexSnapshot(label, selection) : undefined;
+  }
+
+  listIndexSelections(): DirectIndexSelectionSnapshot[] {
+    return [...this.indexSelections.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([label, selection]) => this.indexSnapshot(label, selection));
+  }
+
+  /** Clears an object added by select() or selectIndices() (by its numeric label). */
   clear(objectId: GaussianObjectId): Promise<GaussianMaskUpdate | null> {
     if (this.disposed) return Promise.resolve(null);
     this.assertObjectId(objectId);
     const current = this.selections.get(objectId);
     if (current) current.requestGeneration++;
+    const currentIndex = this.indexSelections.get(objectId);
+    if (currentIndex) currentIndex.requestGeneration++;
     return this.enqueue(() => {
       if (this.disposed) return null;
-      if (!this.selections.has(objectId)) return null;
+      if (!this.selections.has(objectId) && !this.indexSelections.has(objectId)) return null;
       this.selections.delete(objectId);
+      this.indexSelections.delete(objectId);
       return this.mask.clearLabel(objectId);
     });
   }
@@ -126,9 +285,11 @@ export class GaussianObjectHighlighter {
     if (this.disposed) return Promise.resolve(null);
     const worldGeneration = ++this.worldGeneration;
     for (const selection of this.selections.values()) selection.requestGeneration++;
+    for (const selection of this.indexSelections.values()) selection.requestGeneration++;
     return this.enqueue(() => {
       if (this.disposed || worldGeneration !== this.worldGeneration) return null;
       this.selections.clear();
+      this.indexSelections.clear();
       return this.mask.clear();
     });
   }
@@ -154,7 +315,9 @@ export class GaussianObjectHighlighter {
     this.disposed = true;
     this.worldGeneration++;
     for (const selection of this.selections.values()) selection.requestGeneration++;
+    for (const selection of this.indexSelections.values()) selection.requestGeneration++;
     this.selections.clear();
+    this.indexSelections.clear();
     this.mask.dispose();
   }
 
@@ -180,6 +343,26 @@ export class GaussianObjectHighlighter {
     const current = this.selections.get(objectId);
     if (!current) return requestGeneration === 0;
     return current.requestGeneration === requestGeneration;
+  }
+
+  private isIndexRequestCurrent(
+    label: number,
+    requestGeneration: number,
+    worldGeneration: number,
+  ): boolean {
+    if (this.disposed || worldGeneration !== this.worldGeneration) return false;
+    const current = this.indexSelections.get(label);
+    if (!current) return requestGeneration === 0;
+    return current.requestGeneration === requestGeneration;
+  }
+
+  private indexSnapshot(label: number, selection: StoredIndexSelection): DirectIndexSelectionSnapshot {
+    return {
+      objectId: selection.objectId,
+      labelId: label,
+      color: this.mask.getLabelColor(label),
+      selectedIds: selection.selectedIds.slice(),
+    };
   }
 
   private enqueue<T>(operation: () => T | Promise<T>): Promise<T> {

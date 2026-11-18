@@ -43,7 +43,7 @@ const CSS = `
 .pres__notice{position:absolute;left:50%;top:64px;transform:translateX(-50%);padding:7px 16px;border-radius:8px;background:rgba(46,232,106,.92);color:#07210f;font-weight:650;opacity:0;transition:opacity .25s}
 .pres__notice.is-on{opacity:1}
 .pres__notice.is-warn{background:rgba(255,209,102,.95);color:#2a1e00}
-.pres__bar{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);display:flex;gap:14px}
+.pres__bar{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);display:flex;gap:14px;pointer-events:auto}
 .pres__card{width:224px;padding:8px;border-radius:12px;background:rgba(10,13,18,.78);border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(8px);pointer-events:auto;transition:border-color .3s,box-shadow .3s}
 .pres__card.is-new{border-color:#2ee86a;box-shadow:0 0 0 2px rgba(46,232,106,.45)}
 .pres__title{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;font-weight:650}
