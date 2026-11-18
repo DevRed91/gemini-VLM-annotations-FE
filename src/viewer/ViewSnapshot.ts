@@ -150,7 +150,7 @@ export function captureViewSnapshot(
   const splatState = splat
     ? { matrixWorld: Array.from(splat.matrixWorld.elements) }
     : null;
-  const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
   const comma = dataUrl.indexOf(",");
   const mimeType = comma > 5 ? dataUrl.slice(5, dataUrl.indexOf(";", 5) < 0 ? comma : dataUrl.indexOf(";", 5)) : "";
 

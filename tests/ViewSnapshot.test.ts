@@ -40,7 +40,7 @@ function fixture(options: {
     toDataURL: (mimeType: string, quality: number) => {
       readbacks += 1;
       assert.equal(mimeType, "image/jpeg");
-      assert.equal(quality, 0.7);
+      assert.equal(quality, 0.9);
       return IMAGE_DATA_URL;
     },
   } as unknown as HTMLCanvasElement;

@@ -1,4 +1,6 @@
+import { Matrix4, Quaternion, Vector3 } from "three";
 import type { CaptureSlotId, PresentationCapture } from "./presentationCaptures.ts";
+import type { ViewSnapshot } from "../viewer/ViewSnapshot.ts";
 
 export interface NormalizedDetectionBox {
   readonly xMin: number;
@@ -97,20 +99,222 @@ export function observationForView(object: MultiViewObjectDetection, view: Captu
   return object.observations.find((observation) => observation.view === view) ?? null;
 }
 
+/** Serialized request budget; Netlify's buffered ingress limit is 6 MB, so keep a safety margin. */
+export const MULTI_VIEW_BODY_BUDGET_BYTES = 4_800_000;
+const REQUEST_JPEG_QUALITIES = [0.85, 0.75, 0.65] as const;
+const REQUEST_SCALES = [1, 0.85, 0.7, 0.55, 0.45, 0.35, 0.25] as const;
+const MIN_REQUEST_LONG_SIDE = 160;
+
+type Vec3Tuple = readonly [number, number, number];
+type QuatTuple = readonly [number, number, number, number];
+
+/**
+ * Concise camera grounding for one view. World space is the viewer's Three.js space
+ * (right-handed, +Y up, camera looks along local -Z). `orientation` is the camera-to-world
+ * quaternion [x, y, z, w]; `splat` is the splat-local to world transform, decomposed.
+ */
+export interface MultiViewCameraPayload {
+  readonly position: Vec3Tuple;
+  readonly orientation: QuatTuple;
+  readonly projection: {
+    readonly kind: "perspective" | "orthographic" | "unsupported";
+    readonly fovYDegrees?: number;
+    readonly aspect?: number;
+    readonly width?: number;
+    readonly height?: number;
+    readonly near?: number;
+    readonly far?: number;
+  };
+  readonly splat: { readonly position: Vec3Tuple; readonly orientation: QuatTuple; readonly scale: Vec3Tuple } | null;
+}
+
 export interface MultiViewDetectionRequest {
   readonly views: readonly {
     readonly view: CaptureSlotId;
     readonly captureId: string;
     readonly capturedAt: string;
     readonly snapshotId: string;
+    /** Dimensions of `image` (the bounded request copy); aspect ratio equals the original snapshot's. */
     readonly imageWidth: number;
     readonly imageHeight: number;
     readonly image: string;
+    readonly camera?: MultiViewCameraPayload;
   }[];
+}
+
+export interface RequestImage {
+  readonly dataUrl: string;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** A decoded source image that can be re-encoded repeatedly at different sizes/qualities. */
+export interface DecodedRequestImage {
+  encodeJpeg(width: number, height: number, quality: number): string;
+  dispose(): void;
 }
 
 export interface MultiViewFetchDeps {
   readonly fetch: typeof fetch;
+  /** Decode a snapshot data URL for re-encoding. Defaults to a browser canvas loader; null when unavailable. */
+  readonly loadImage?: ((dataUrl: string) => Promise<DecodedRequestImage>) | null;
+  /** Structured telemetry sink; defaults to console.info. Never receives base64 image data. */
+  readonly log?: (message: string, details: Record<string, unknown>) => void;
+}
+
+const round = (n: number, digits = 4) => Number(n.toFixed(digits));
+const finitePositive = (n: number) => Number.isFinite(n) && n > 0;
+
+function cameraProjection(snapshot: ViewSnapshot): MultiViewCameraPayload["projection"] {
+  const kind = snapshot.camera.projectionKind;
+  const m = snapshot.camera.projectionMatrix;
+  if (m.length !== 16 || !m.every(Number.isFinite)) return { kind };
+  if (kind === "perspective" && finitePositive(m[0]) && finitePositive(m[5]) && Math.abs(m[11] + 1) < 1e-6) {
+    const near = m[14] / (m[10] - 1);
+    const far = m[14] / (m[10] + 1);
+    return {
+      kind,
+      fovYDegrees: round((2 * Math.atan(1 / m[5]) * 180) / Math.PI, 3),
+      aspect: round(m[5] / m[0]),
+      ...(finitePositive(near) ? { near: round(near) } : {}),
+      ...(finitePositive(far) ? { far: round(far) } : {}),
+    };
+  }
+  if (kind === "orthographic" && finitePositive(Math.abs(m[0])) && finitePositive(Math.abs(m[5])) && m[10] !== 0) {
+    const near = (m[14] + 1) / m[10];
+    const far = (m[14] - 1) / m[10];
+    return {
+      kind,
+      width: round(2 / m[0]),
+      height: round(2 / m[5]),
+      ...(Number.isFinite(near) ? { near: round(near) } : {}),
+      ...(Number.isFinite(far) ? { far: round(far) } : {}),
+    };
+  }
+  return { kind };
+}
+
+/** Compact, finite-number camera metadata for the backend; never includes raw 16-float matrices. */
+export function buildCameraPayload(snapshot: ViewSnapshot): MultiViewCameraPayload {
+  let splat: MultiViewCameraPayload["splat"] = null;
+  const matrix = snapshot.splat?.matrixWorld;
+  if (matrix && matrix.length === 16 && matrix.every(Number.isFinite)) {
+    const position = new Vector3();
+    const orientation = new Quaternion();
+    const scale = new Vector3();
+    new Matrix4().fromArray(matrix as number[]).decompose(position, orientation, scale);
+    splat = {
+      position: [round(position.x), round(position.y), round(position.z)],
+      orientation: [round(orientation.x, 5), round(orientation.y, 5), round(orientation.z, 5), round(orientation.w, 5)],
+      scale: [round(scale.x), round(scale.y), round(scale.z)],
+    };
+  }
+  const { position, orientation } = snapshot.camera;
+  return {
+    position: [round(position.x), round(position.y), round(position.z)],
+    orientation: [round(orientation.x, 5), round(orientation.y, 5), round(orientation.z, 5), round(orientation.w, 5)],
+    projection: cameraProjection(snapshot),
+    splat,
+  };
+}
+
+function describeDataUrl(dataUrl: string): { mimeType: string; base64Chars: number; decodedImageBytes: number } {
+  const match = /^data:([^;,]+)(?:;[^,]*)?,/.exec(dataUrl);
+  const payload = dataUrl.slice(match ? match[0].length : 0);
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  return {
+    mimeType: match?.[1] ?? "unknown",
+    base64Chars: payload.length,
+    decodedImageBytes: Math.max(0, Math.floor((payload.length * 3) / 4) - padding),
+  };
+}
+
+function buildBody(captures: readonly PresentationCapture[], images: readonly RequestImage[]): MultiViewDetectionRequest {
+  return {
+    views: captures.map((capture, index) => ({
+      view: capture.slot,
+      captureId: capture.id,
+      capturedAt: capture.capturedAtIso,
+      snapshotId: capture.snapshot.id,
+      imageWidth: images[index].width,
+      imageHeight: images[index].height,
+      image: images[index].dataUrl,
+      camera: buildCameraPayload(capture.snapshot),
+    })),
+  };
+}
+
+const bodyBytes = (body: MultiViewDetectionRequest) => new TextEncoder().encode(JSON.stringify(body)).byteLength;
+const megabytes = (bytes: number) => (bytes / 1_000_000).toFixed(2);
+
+/** Browser loader: decodes with an <img> and re-encodes through a reused canvas. Null outside a DOM. */
+function browserImageLoader(): ((dataUrl: string) => Promise<DecodedRequestImage>) | null {
+  if (typeof document === "undefined" || typeof Image === "undefined") return null;
+  return async (dataUrl) => {
+    const img = new Image();
+    img.src = dataUrl;
+    await img.decode();
+    const canvas = document.createElement("canvas");
+    return {
+      encodeJpeg(width, height, quality) {
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Cannot re-encode snapshot for Gemini: 2D canvas is unavailable");
+        context.imageSmoothingQuality = "high";
+        context.drawImage(img, 0, 0, width, height);
+        return canvas.toDataURL("image/jpeg", quality);
+      },
+      dispose() { canvas.width = canvas.height = 0; },
+    };
+  };
+}
+
+/**
+ * Build the request body from bounded JPEG copies of the snapshots (the originals are untouched).
+ * Starts at the original size and quality 0.85, then steps quality down before shrinking
+ * resolution (aspect preserved, so normalized boxes stay valid) until the serialized JSON fits.
+ */
+export async function buildBudgetedMultiViewBody(
+  captures: readonly PresentationCapture[],
+  deps: Pick<MultiViewFetchDeps, "loadImage">,
+  budgetBytes = MULTI_VIEW_BODY_BUDGET_BYTES,
+): Promise<{ body: MultiViewDetectionRequest; bodyBytes: number; jpegQuality: number | null; scale: number }> {
+  const loader = deps.loadImage === undefined ? browserImageLoader() : deps.loadImage;
+  if (!loader) {
+    // No canvas available (non-browser): the originals are the only images we have.
+    const body = buildBody(captures, captures.map((c) => ({ dataUrl: c.snapshot.image.dataUrl, width: c.snapshot.image.width, height: c.snapshot.image.height })));
+    const bytes = bodyBytes(body);
+    if (bytes > budgetBytes) throw new Error(`Multi-view request is ${megabytes(bytes)} MB, over the ${megabytes(budgetBytes)} MB limit, and images cannot be re-encoded in this environment`);
+    return { body, bodyBytes: bytes, jpegQuality: null, scale: 1 };
+  }
+  const decoded: DecodedRequestImage[] = [];
+  try {
+    for (const capture of captures) decoded.push(await loader(capture.snapshot.image.dataUrl));
+    let smallest = 0;
+    let last = { width: 0, height: 0, quality: REQUEST_JPEG_QUALITIES[0] as number };
+    for (const scale of REQUEST_SCALES) {
+      const sizes = captures.map(({ snapshot }) => ({
+        width: Math.max(1, Math.round(snapshot.image.width * scale)),
+        height: Math.max(1, Math.round(snapshot.image.height * scale)),
+      }));
+      if (scale < 1 && Math.max(...sizes.map((size) => Math.max(size.width, size.height))) < MIN_REQUEST_LONG_SIDE) break;
+      for (const quality of REQUEST_JPEG_QUALITIES) {
+        const images = decoded.map((image, index) => ({ ...sizes[index], dataUrl: image.encodeJpeg(sizes[index].width, sizes[index].height, quality) }));
+        const body = buildBody(captures, images);
+        const bytes = bodyBytes(body);
+        if (bytes <= budgetBytes) return { body, bodyBytes: bytes, jpegQuality: quality, scale };
+        smallest = bytes;
+        last = { ...sizes[0], quality };
+      }
+    }
+    throw new Error(
+      `Multi-view request is still ${megabytes(smallest)} MB after downscaling to ${last.width}x${last.height} at JPEG quality ${last.quality}; ` +
+      `the limit is ${megabytes(budgetBytes)} MB. Capture the views in a smaller viewport and retry.`,
+    );
+  } finally {
+    for (const image of decoded) image.dispose();
+  }
 }
 
 export interface MultiViewWorkflowState {
@@ -249,17 +453,17 @@ export async function requestMultiViewDetections(
   if (captures.length !== 3 || expected.some((view, index) => captures[index]?.slot !== view)) {
     throw new TypeError("Capture Front, Side and Top before sending to Gemini");
   }
-  const body: MultiViewDetectionRequest = {
-    views: captures.map((capture) => ({
-      view: capture.slot,
-      captureId: capture.id,
-      capturedAt: capture.capturedAtIso,
-      snapshotId: capture.snapshot.id,
-      imageWidth: capture.snapshot.image.width,
-      imageHeight: capture.snapshot.image.height,
-      image: capture.snapshot.image.dataUrl,
-    })),
-  };
+  const budgeted = await buildBudgetedMultiViewBody(captures, deps);
+  const body = budgeted.body;
+  (deps.log ?? ((message, details) => console.info(message, details)))("[multiview] request", {
+    endpoint,
+    bodyBytes: budgeted.bodyBytes,
+    budgetBytes: MULTI_VIEW_BODY_BUDGET_BYTES,
+    jpegQuality: budgeted.jpegQuality,
+    scale: budgeted.scale,
+    order: body.views.map((view) => view.view),
+    views: body.views.map((view) => ({ view: view.view, width: view.imageWidth, height: view.imageHeight, ...describeDataUrl(view.image) })),
+  });
   const response = await deps.fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
