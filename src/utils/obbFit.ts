@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { OBB } from "./obb";
+import { OBB } from "./obb.ts";
 
 export interface OBBFitOptions {
   /** Absolute margin added to each half extent. Default 0.02. */
@@ -161,4 +161,26 @@ export function obbWorldToLocal(world: OBB, object: THREE.Object3D): OBB {
     quaternion: localQuat,
     size: world.size.clone().multiplyScalar(sAbs),
   });
+}
+
+/** Return the centre of the OBB face whose outward normal points most toward world +Y. */
+export function obbTopSurfaceCenter(obb: OBB): THREE.Vector3 {
+  const half = obb.halfExtents;
+  if (![half.x, half.y, half.z].every((extent) => extent > 0 && Number.isFinite(extent))) {
+    throw new RangeError("OBB must have positive finite extents");
+  }
+  const axes = [
+    new THREE.Vector3(1, 0, 0).applyQuaternion(obb.quaternion),
+    new THREE.Vector3(0, 1, 0).applyQuaternion(obb.quaternion),
+    new THREE.Vector3(0, 0, 1).applyQuaternion(obb.quaternion),
+  ];
+  const extents = [half.x, half.y, half.z];
+  let topAxis = 0;
+  for (let index = 1; index < axes.length; index++) {
+    if (Math.abs(axes[index].y) > Math.abs(axes[topAxis].y)) topAxis = index;
+  }
+  return obb.position.clone().addScaledVector(
+    axes[topAxis],
+    Math.sign(axes[topAxis].y || 1) * extents[topAxis],
+  );
 }

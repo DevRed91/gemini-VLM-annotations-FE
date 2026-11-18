@@ -19,6 +19,7 @@ export interface PresentationModel {
   reviewOpen: boolean;
   selectedObjectId: string | null;
   selectionConfirmed: boolean;
+  selectionPlacing: boolean;
 }
 
 export interface PresentationActions {
@@ -115,6 +116,8 @@ export class PresentationPanel {
   private readonly error = el("div", "pres__error");
   private readonly review = el("section", "pres__review");
   private readonly cards = new Map<CaptureSlotId, Card>();
+  /** What the review DOM was last built from; null while closed or never built. */
+  private reviewShown: { detections: PresentationModel["detections"]; captureIds: string; selectedObjectId: string | null; selectionConfirmed: boolean; selectionPlacing: boolean } | null = null;
   private noticeTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly flashTimers = new Map<CaptureSlotId, ReturnType<typeof setTimeout>>();
   private disposed = false;
@@ -182,7 +185,28 @@ export class PresentationPanel {
     this.error.style.display = model.detectionError ? "" : "none";
     this.set(this.error, model.detectionError);
     this.review.style.display = model.reviewOpen ? "grid" : "none";
-    if (model.reviewOpen) this.renderReview(model);
+    if (!model.reviewOpen) {
+      this.reviewShown = null;
+    } else {
+      // The controller re-renders on a ~100 ms HUD tick. Rebuilding the review
+      // each time replaces the buttons between mousedown and mouseup, so the
+      // browser never dispatches `click`. Only rebuild when its inputs changed.
+      const next = {
+        detections: model.detections,
+        captureIds: model.captures.map((capture) => capture?.id ?? "").join("|"),
+        selectedObjectId: model.selectedObjectId,
+        selectionConfirmed: model.selectionConfirmed,
+        selectionPlacing: model.selectionPlacing,
+      };
+      const shown = this.reviewShown;
+      const unchanged = shown !== null && shown.detections === next.detections && shown.captureIds === next.captureIds
+        && shown.selectedObjectId === next.selectedObjectId && shown.selectionConfirmed === next.selectionConfirmed
+        && shown.selectionPlacing === next.selectionPlacing;
+      if (!unchanged) {
+        this.renderReview(model);
+        this.reviewShown = next;
+      }
+    }
     CAPTURE_SLOTS.forEach((slot, index) => {
       const card = this.cards.get(slot.id)!;
       const capture = model.captures[index] ?? null;
@@ -224,6 +248,7 @@ export class PresentationPanel {
     for (const object of model.detections) {
       const button = el("button", `pres__object${object.id === model.selectedObjectId ? " is-selected" : ""}`);
       button.type = "button";
+      button.disabled = model.selectionPlacing;
       button.setAttribute("aria-pressed", object.id === model.selectedObjectId ? "true" : "false");
       const firstVisible = CAPTURE_SLOTS.map((slot) => ({ slot, observation: observationForView(object, slot.id), capture: model.captures.find((capture) => capture?.slot === slot.id) ?? null }))
         .find((entry) => entry.observation?.visible && entry.capture)?.capture;
@@ -316,9 +341,12 @@ export class PresentationPanel {
       }).join(" · ");
       main.append(el("div", "pres__selection-state", states));
       const actions = el("div", "pres__review-actions");
-      const continueButton = el("button", "pres__continue", model.selectionConfirmed ? "Selection confirmed" : "Continue with Selected Object");
+      const continueLabel = model.selectionPlacing
+        ? "Placing annotation…"
+        : model.selectionConfirmed ? "Selection confirmed" : "Continue with Selected Object";
+      const continueButton = el("button", "pres__continue", continueLabel);
       continueButton.type = "button";
-      continueButton.disabled = model.selectionConfirmed;
+      continueButton.disabled = model.selectionConfirmed || model.selectionPlacing;
       continueButton.addEventListener("click", () => this.actions.continueWithSelectedObject());
       actions.append(continueButton);
       main.append(actions);
@@ -349,6 +377,11 @@ export class PresentationPanel {
   warn(message: string): void {
     if (this.disposed) return;
     this.showNotice(message, true);
+  }
+
+  announce(message: string): void {
+    if (this.disposed) return;
+    this.showNotice(message, false);
   }
 
   private showNotice(message: string, warning: boolean): void {

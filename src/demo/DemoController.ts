@@ -24,7 +24,11 @@ import { poseChange, type CameraSample } from "./settle.ts";
 import { SettledMeasurer, type CastResult, type SettledMeasurement } from "./settledMeasurement.ts";
 import { SettledOverlay } from "./SettledOverlay.ts";
 import { PresentationPanel } from "./PresentationPanel.ts";
-import { MultiViewDetectionWorkflow, requestMultiViewDetections } from "./multiViewDetection.ts";
+import {
+  MultiViewDetectionWorkflow,
+  requestMultiViewDetections,
+  type SelectedMultiViewObject,
+} from "./multiViewDetection.ts";
 import {
   CAPTURE_SLOTS,
   PresentationCaptureStore,
@@ -63,13 +67,18 @@ export interface DemoHost {
   annotationDiagnostics: AnnotationDiagnostics | null;
   objectHighlighter: { list(): unknown[] } | null;
   /** Live annotations (read-only here). */
-  annotations: { apartmentId: string; helper?: THREE.Object3D }[];
+  annotations: { apartmentId: string; helper?: THREE.Object3D; sourceObjectId?: string }[];
   /** Persisted scene annotation records (read-only here). */
   annotationMetadataStore: { list(): { annotationId: string }[] } | null;
   captureViewSnapshot(): ViewSnapshot;
   splatRay(x: number, y: number): { ray: THREE.Ray; intersection: THREE.Intersection | null } | null;
   clearAllSelections(): Promise<void>;
   liveWorldState(): LiveWorldState;
+  /** DEV presentation handoff; `isCurrent` cancels placement if captures reset while lifting. */
+  annotateMultiViewObject(
+    selected: SelectedMultiViewObject,
+    isCurrent?: () => boolean,
+  ): Promise<{ apartmentId: string } | null>;
 }
 
 export interface DemoOptions {
@@ -150,6 +159,8 @@ export class DemoController {
   private readonly multiViewEndpoint: string;
   private readonly multiViewHeaders: Record<string, string>;
   private readonly multiViewWorkflow = new MultiViewDetectionWorkflow();
+  private multiViewPlacementPending = false;
+  private multiViewPlacementSequence = 0;
   private readonly cleanups: Array<() => void> = [];
   private active: ActiveSnapshot | null = null;
   private pendingSnapshot: ViewSnapshot | null = null;
@@ -400,11 +411,19 @@ export class DemoController {
       sceneLabel: sceneLabelFromUrl(this.host.currentWorldUrl),
       captures: this.presentationStore.slots(),
       ...this.multiViewWorkflow.state(),
+      selectionPlacing: this.multiViewPlacementPending,
     });
   }
 
   private invalidateMultiViewReview(): void {
+    this.cancelPendingMultiViewPlacement();
     this.multiViewWorkflow.invalidate();
+  }
+
+  private cancelPendingMultiViewPlacement(): void {
+    this.multiViewPlacementSequence++;
+    this.multiViewPlacementPending = false;
+    this.multiViewWorkflow.cancelConfirmation();
   }
 
   private async sendPresentationCapturesToGemini(): Promise<void> {
@@ -438,9 +457,52 @@ export class DemoController {
     this.syncPresentation();
   }
 
-  private confirmMultiViewSelection(): void {
-    this.multiViewWorkflow.confirm(this.presentationStore.slots());
+  private async confirmMultiViewSelection(): Promise<void> {
+    if (this.multiViewPlacementPending || this.disposed) return;
+    const selected = this.multiViewWorkflow.confirm(this.presentationStore.slots());
+    if (!selected) return;
+
+    this.multiViewPlacementPending = true;
+    const placementId = ++this.multiViewPlacementSequence;
+    const isCurrent = () => {
+      if (this.disposed || !this.multiViewPlacementPending || placementId !== this.multiViewPlacementSequence) return false;
+      if (this.multiViewWorkflow.state().selectedObject !== selected) return false;
+      const captures = this.presentationStore.slots();
+      if (captures.length !== selected.captures.length || captures.some((capture, index) => capture?.id !== selected.captures[index]?.id)) return false;
+      const live = this.host.liveWorldState();
+      return live.splatLoaded && live.splat === this.host.currentSplat &&
+        live.worldGeneration === selected.captures[0]?.snapshot.worldGeneration;
+    };
+
     this.syncPresentation();
+    try {
+      if (!isCurrent()) return;
+      const annotation = await this.host.annotateMultiViewObject(selected, isCurrent);
+      if (!isCurrent()) {
+        if (placementId === this.multiViewPlacementSequence) {
+          this.multiViewWorkflow.cancelConfirmation();
+          this.presentationPanel?.warn("The scene or captures changed before the annotation could be placed. Please retry.");
+        }
+        return;
+      }
+      if (!annotation) {
+        this.multiViewWorkflow.cancelConfirmation();
+        this.presentationPanel?.warn("Could not resolve a 3D surface anchor for this object.");
+        return;
+      }
+      this.multiViewWorkflow.closeReview();
+      this.presentationPanel?.announce(`Annotation placed: ${selected.label}`);
+    } catch {
+      if (isCurrent()) {
+        this.multiViewWorkflow.cancelConfirmation();
+        this.presentationPanel?.warn("Could not resolve a 3D surface anchor for this object.");
+      }
+    } finally {
+      if (placementId === this.multiViewPlacementSequence) {
+        this.multiViewPlacementPending = false;
+        this.syncPresentation();
+      }
+    }
   }
 
   private adoptPendingSnapshot(): void {
@@ -878,6 +940,7 @@ export class DemoController {
   }
 
   private resetDemoState(): void {
+    this.cancelPendingMultiViewPlacement();
     this.counters.resets++;
     this.gate.cancel();
     this.seam.cancelPending();
@@ -897,6 +960,7 @@ export class DemoController {
     this.settledDriftCache = null;
     this.syncSettled();
     this.restorePose(this.homePose);
+    this.syncPresentation();
   }
 
   // --------------------------------------------- reset + clear annotations
@@ -1110,6 +1174,7 @@ export class DemoController {
       diagnosticsEnabled: this.host.annotationDiagnostics?.isEnabled ?? null,
       liveIntervalMs: this.liveIntervalMs,
       overlayVisible: this.root.visible,
+      selectionPlacing: this.multiViewPlacementPending,
       presentation: this.presentationPanel
         ? {
             captures: this.presentationStore.slots(),
@@ -1127,6 +1192,7 @@ export class DemoController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.cancelPendingMultiViewPlacement();
     this.seam.cancelPending();
     for (const cleanup of this.cleanups.splice(0).reverse()) cleanup();
   }

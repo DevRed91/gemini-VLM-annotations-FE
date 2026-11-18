@@ -85,6 +85,8 @@ export interface MultiViewLiftResult {
   readonly indices: Uint32Array;
   /** OBB fitted to the fused visible-surface hits (hidden back sides are not sampled), or null with no hits. */
   readonly obb: OBBFitResult | null;
+  /** Inlier surface hits used to fit `obb`; retained for a point-only annotation fallback. */
+  readonly surfacePoints: readonly SnapshotVector3[];
   readonly diagnostics: MultiViewLiftDiagnostics;
 }
 
@@ -413,6 +415,7 @@ export async function liftMultiViewGaussians(input: MultiViewLiftInput): Promise
   ): MultiViewLiftResult => ({
     indices,
     obb,
+    surfacePoints: inliers.map((point) => ({ x: point.x, y: point.y, z: point.z })),
     diagnostics: {
       viewsUsed: voting.map((s) => s.view),
       excludedViews: excluded,

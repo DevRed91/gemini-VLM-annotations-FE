@@ -14,7 +14,7 @@ import {
   isMobileDevice,
 } from "./utils/mobileJoystick";
 import { HoverTint, OBB } from "./utils/hoverTint";
-import { fitOBB, obbWorldToLocal } from "./utils/obbFit";
+import { fitOBB, obbTopSurfaceCenter, obbWorldToLocal } from "./utils/obbFit";
 import { SpatialObjectRegistry } from "./utils/spatialObjectRegistry";
 import { searchObjects } from "./spatial/ObjectMatcher";
 import type { SearchOptions, SearchQuery } from "./spatial/types";
@@ -53,6 +53,7 @@ import { GaussianObjectHighlighter } from "./utils/gaussianObjectHighlighter";
 import { defaultGaussianMaskColor } from "./utils/gaussianMaskManager";
 import { isNonLodSplat } from "./utils/gaussianIndexSupport";
 import { dispatchGeminiInference, isDemoInferenceSuppressed } from "./utils/inferenceSuppression";
+import type { SelectedMultiViewObject } from "./demo/multiViewDetection.ts";
 // import { OrbitControls } from "three/examples/jsm/Addons.js";
 
 const API_BASE_URL =
@@ -117,6 +118,7 @@ interface ViewerAnnotation {
   fallbackTint?: HoverTint;
   selectionOwner?: GaussianObjectHighlighter;
   selectionId?: number;
+  sourceObjectId?: string;
   helperBaseColor?: THREE.Color;
   worldGeneration: number;
 }
@@ -719,6 +721,117 @@ export class SplatViewer {
     return null;
   }
 
+  /** DEV presentation handoff: lift the confirmed boxes through their frozen cameras, then tag the fused 3D result. */
+  public async annotateMultiViewObject(
+    selected: SelectedMultiViewObject,
+    isCurrent: () => boolean = () => true,
+  ): Promise<ViewerAnnotation | null> {
+    const splat = this.currentSplat;
+    const generation = this.worldGeneration;
+    const current = () => isCurrent() && generation === this.worldGeneration && splat !== null &&
+      splat === this.currentSplat && this.splatLoaded;
+    if (!splat || !this.splatLoaded || !current()) return null;
+
+    // These paths stay dynamically imported so the dev-only multi-view
+    // implementation does not join the production annotation bundle.
+    const [{ liftMultiViewGaussians }, { buildLifterViewsFromSelection }] = await Promise.all([
+      import("./segmentation/multiViewGaussianLifter.ts"),
+      import("./demo/multiViewToLifterViews.ts"),
+    ]);
+    if (!current()) return null;
+    const lift = await liftMultiViewGaussians({
+      splat,
+      worldGeneration: generation,
+      views: buildLifterViewsFromSelection(selected),
+    });
+    if (!current()) return null;
+
+    const fitted = lift.obb?.obb ?? null;
+    const finiteSize = fitted && [fitted.size.x, fitted.size.y, fitted.size.z].every(Number.isFinite);
+    const usableObb = Boolean(fitted && finiteSize && fitted.size.x > 1e-4 && fitted.size.y > 1e-4 && fitted.size.z > 1e-4);
+    const selectionKey = `multi-view:${selected.objectId}`;
+    let selectionOwner: GaussianObjectHighlighter | null = null;
+    let selectionLabelId: number | undefined;
+
+    if (usableObb && lift.indices.length > 0) {
+      selectionOwner = this.objectHighlighter;
+      if (!selectionOwner) {
+        if (!isNonLodSplat(splat)) return null;
+        selectionOwner = await GaussianObjectHighlighter.create(splat);
+        if (!current()) {
+          selectionOwner.dispose();
+          return null;
+        }
+        this.objectHighlighter = selectionOwner;
+      }
+      const previousSelection = selectionOwner.getIndexSelection(selectionKey)?.selectedIds;
+      const maskUpdate = await selectionOwner.selectIndices(selectionKey, lift.indices);
+      if (!maskUpdate) return null;
+      if (!current()) {
+        // A recapture can invalidate the handoff without replacing the world.
+        // Restore the previous membership (or clear the newly created label)
+        // if this request's result is still the active selection.
+        const active = selectionOwner.getIndexSelection(selectionKey)?.selectedIds;
+        const stillOurs = active && active.length === lift.indices.length && active.every((index, i) => index === lift.indices[i]);
+        if (stillOurs) {
+          if (previousSelection) await selectionOwner.selectIndices(selectionKey, previousSelection);
+          else await selectionOwner.clear(maskUpdate.labelId);
+        }
+        return null;
+      }
+      if (maskUpdate.acceptedCount === 0) return null;
+      selectionLabelId = maskUpdate.labelId;
+    } else if (selectionOwner === null) {
+      selectionOwner = this.objectHighlighter;
+    }
+
+    let anchor: THREE.Vector3;
+    let worldObb: OBB | undefined;
+    let localObb: OBB | undefined;
+    if (usableObb && selectionOwner && selectionLabelId !== undefined) {
+      worldObb = new OBB(fitted!);
+      localObb = obbWorldToLocal(worldObb, splat);
+      anchor = obbTopSurfaceCenter(worldObb);
+    } else {
+      if (lift.surfacePoints.length === 0) return null;
+      anchor = lift.surfacePoints.reduce<THREE.Vector3>(
+        (centre, point) => centre.add(new THREE.Vector3(point.x, point.y, point.z)),
+        new THREE.Vector3(),
+      ).multiplyScalar(1 / lift.surfacePoints.length);
+      if (![anchor.x, anchor.y, anchor.z].every(Number.isFinite)) return null;
+      const previousLabel = selectionOwner?.getLabelForObject(selectionKey);
+      if (previousLabel !== undefined) {
+        await selectionOwner!.clear(previousLabel);
+        if (!current()) return null;
+      }
+      selectionOwner = null;
+      selectionLabelId = undefined;
+    }
+
+    if (!current()) return null;
+    const annotation = this.createAnnotationElement(anchor, selected.label, {
+      description: selected.description,
+      ...(worldObb && localObb ? { dimensions: {
+        width: worldObb.size.x,
+        height: worldObb.size.y,
+        depth: worldObb.size.z,
+      }, worldObb, localObb } : {}),
+      selectionOwner: selectionOwner ?? undefined,
+      selectionId: selectionLabelId,
+      sourceObjectId: selected.objectId,
+    });
+
+    // Replace the previous annotation for this Gemini identity without clearing
+    // the label just written by selectIndices under the same stable key.
+    const duplicates = this.annotations.filter((entry) => entry !== annotation && entry.sourceObjectId === selected.objectId);
+    for (const duplicate of duplicates) {
+      const index = this.annotations.indexOf(duplicate);
+      if (index >= 0) this.annotations.splice(index, 1);
+      this.removeAnnotationVisual(duplicate);
+    }
+    return annotation;
+  }
+
   // Create a simple UI helper function
   // private createAnnotationElement(position: THREE.Vector3, label: string) {
   //   const div = document.createElement("div");
@@ -747,6 +860,7 @@ export class SplatViewer {
       localObb?: OBB;
       selectionOwner?: GaussianObjectHighlighter;
       selectionId?: number;
+      sourceObjectId?: string;
       persistMetadata?: boolean;
     } = {},
   ): ViewerAnnotation {
@@ -811,6 +925,7 @@ export class SplatViewer {
       apartmentId: requestedAnnotationId ?? `annotation-${this.annotationSequence}`,
       selectionOwner: options.selectionOwner,
       selectionId: options.selectionId,
+      sourceObjectId: options.sourceObjectId,
       worldGeneration: this.worldGeneration,
     };
     // Close only hides the card; the annotation and its data stay in the scene.

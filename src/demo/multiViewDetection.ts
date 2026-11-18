@@ -207,6 +207,12 @@ export class MultiViewDetectionWorkflow {
     return true;
   }
 
+  /** Let the user retry after a failed or cancelled downstream placement. */
+  cancelConfirmation(): void {
+    this.selectedObject = null;
+    this.selectionConfirmed = false;
+  }
+
   confirm(captures: readonly (PresentationCapture | null)[], confirmedAtIso = new Date().toISOString()): SelectedMultiViewObject | null {
     if (!this.canSend(captures)) return null;
     const object = this.detections.find((entry) => entry.id === this.selectedObjectId);

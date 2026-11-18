@@ -18,16 +18,18 @@ class FakeEl {
   width = 0;
   height = 0;
   id = "";
+  disabled = false;
+  isConnected = false;
   attrs = new Map<string, string>();
   listeners = new Map<string, Array<(event?: unknown) => void>>();
   onDispatchEvent: ((event: unknown) => void) | null = null;
   classList = { toggle() {}, add() {}, remove() {} };
   readonly tag: string;
   constructor(tag: string) { this.tag = tag; }
-  append(...nodes: FakeEl[]) { this.children.push(...nodes); }
-  appendChild(node: FakeEl) { this.children.push(node); return node; }
-  replaceChildren(...nodes: FakeEl[]) { this.children = [...nodes]; }
-  remove() { removed.add(this); }
+  append(...nodes: FakeEl[]) { for (const node of nodes) node.isConnected = true; this.children.push(...nodes); }
+  appendChild(node: FakeEl) { node.isConnected = true; this.children.push(node); return node; }
+  replaceChildren(...nodes: FakeEl[]) { for (const node of nodes) node.isConnected = true; this.children = [...nodes]; }
+  remove() { this.isConnected = false; removed.add(this); }
   setAttribute(k: string, v: string) { this.attrs.set(k, v); }
   removeAttribute(k: string) { this.attrs.delete(k); }
   addEventListener(type: string, fn: (event?: unknown) => void) {
@@ -157,6 +159,7 @@ function makeHost(env: ReturnType<typeof installEnv>) {
   };
   const diagnostics = new FakeDiagnostics();
   const calls = { clearAll: 0, splatRay: 0 };
+  let worldGeneration = 1;
   const annotations: { apartmentId: string; helper?: THREE.Object3D }[] = [];
   const records: { annotationId: string }[] = [];
   const host = {
@@ -178,7 +181,7 @@ function makeHost(env: ReturnType<typeof installEnv>) {
       annotations.length = 0;
       records.length = 0;
     },
-    liveWorldState: () => ({ worldGeneration: 1, splat, splatLoaded: true }),
+    liveWorldState: () => ({ worldGeneration, splat, splatLoaded: true }),
   } as unknown as DemoHost;
   canvas.onDispatchEvent = (rawEvent) => {
     const event = rawEvent as { clientX: number; clientY: number };
@@ -200,7 +203,7 @@ function makeHost(env: ReturnType<typeof installEnv>) {
     return helper;
   };
   void env;
-  return { host, scene, camera, rig, splat, diagnostics, calls, annotations, records, addAnnotation, canvas };
+  return { host, scene, camera, rig, splat, diagnostics, calls, annotations, records, addAnnotation, canvas, setWorldGeneration: (value: number) => { worldGeneration = value; } };
 }
 
 // ------------------------------------------------------------------- tests
@@ -243,6 +246,32 @@ describe("demo controller lifecycle (fake DOM, fake AnnotationDiagnostics)", () 
       for (const l of env.listeners) if (l.type === "click" && !l.capture) l.fn(event);
     };
     return { controller, frame, run, moveTo, hud, capture };
+  }
+
+  const multiViewResponse = {
+    objects: [{
+      id: "main-table",
+      label: "Main table",
+      description: "A table",
+      observations: (["front", "side", "top"] as const).map((view) => ({
+        view, visible: true, box: { xMin: 0.2, yMin: 0.2, xMax: 0.8, yMax: 0.8 },
+      })),
+    }],
+  };
+
+  async function prepareReview(rig: ReturnType<typeof makeHost>) {
+    env.fakeWindow.fetch = async () => new Response(JSON.stringify(multiViewResponse), { status: 200 });
+    const d = create(rig, { presentation: true });
+    for (const slot of ["front", "side", "top"] as const) d.controller.capturePresentationSlot(slot);
+    find(env.body, (node) => node.className.includes("pres__send"))[0].click();
+    for (let i = 0; i < 8; i++) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(d.controller.state().presentation?.reviewOpen, true);
+    find(env.body, (node) => node.className.startsWith("pres__object"))[0].click();
+    return d;
+  }
+
+  function continueButton(): FakeEl {
+    return find(env.body, (node) => node.className === "pres__continue")[0];
   }
 
   test("camera-only live rays are the default and cast nothing into the splat while moving", () => {
@@ -381,6 +410,78 @@ describe("demo controller lifecycle (fake DOM, fake AnnotationDiagnostics)", () 
     assert.equal(d.controller.state().hasSnapshot, false);
     assert.equal(d.controller.state().settled, null);
     assert.equal(rig.rig.position.x, 0, "home pose restored");
+  });
+
+  test("multi-view confirmation shows loading, guards double-clicks, closes on success and preserves the selection", async () => {
+    const rig = makeHost(env);
+    let calls = 0;
+    let finish!: (annotation: { apartmentId: string } | null) => void;
+    rig.host.annotateMultiViewObject = () => {
+      calls++;
+      return new Promise((resolve) => { finish = resolve; });
+    };
+    const d = await prepareReview(rig);
+    const continueBefore = continueButton();
+    continueBefore.click();
+    continueBefore.click();
+    assert.equal(calls, 1, "only one placement can run at a time");
+    const loading = continueButton();
+    assert.equal(loading.textContent, "Placing annotation…");
+    assert.equal(loading.disabled, true);
+
+    finish({ apartmentId: "annotation-1" });
+    for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve));
+    const state = d.controller.state().presentation!;
+    assert.equal(state.reviewOpen, false);
+    assert.equal(state.selectedObject?.objectId, "main-table", "confirmed selection remains available to ?seg=1");
+    assert.match(text(env.body), /Annotation placed: Main table/);
+  });
+
+  test("a null placement keeps review open, clears confirmation and warns so the user can retry", async () => {
+    const rig = makeHost(env);
+    rig.host.annotateMultiViewObject = async () => null;
+    const d = await prepareReview(rig);
+    continueButton().click();
+    for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve));
+    const state = d.controller.state().presentation!;
+    assert.equal(state.reviewOpen, true);
+    assert.equal(state.selectionConfirmed, false);
+    assert.equal(continueButton().disabled, false);
+    assert.equal(continueButton().textContent, "Continue with Selected Object");
+    assert.match(text(env.body), /Could not resolve a 3D surface anchor for this object/);
+  });
+
+  test("capture replacement while lifting invalidates the handoff before it can place an annotation", async () => {
+    const rig = makeHost(env);
+    let finish!: () => void;
+    rig.host.annotateMultiViewObject = (_selected, isCurrent) => new Promise((resolve) => {
+      finish = () => resolve(isCurrent?.() ? { apartmentId: "stale" } : null);
+    });
+    const d = await prepareReview(rig);
+    continueButton().click();
+    assert.equal(d.controller.state().selectionPlacing, true);
+    d.controller.capturePresentationSlot("front");
+    finish();
+    for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(rig.annotations.length, 0);
+    assert.equal(d.controller.state().selectionPlacing, false);
+    assert.equal(d.controller.state().presentation?.reviewOpen, false);
+  });
+
+  test("world generation change during placement aborts the stale result", async () => {
+    const rig = makeHost(env);
+    let finish!: () => void;
+    rig.host.annotateMultiViewObject = (_selected, isCurrent) => new Promise((resolve) => {
+      finish = () => resolve(isCurrent?.() ? { apartmentId: "stale" } : null);
+    });
+    const d = await prepareReview(rig);
+    continueButton().click();
+    rig.setWorldGeneration(2);
+    finish();
+    for (let i = 0; i < 4; i++) await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(rig.annotations.length, 0);
+    assert.equal(d.controller.state().selectionPlacing, false);
+    assert.equal(d.controller.state().presentation?.reviewOpen, false);
   });
 
   test("Reset + Clear Annotations: needs confirmation, then clears, verifies and updates the HUD", async () => {
