@@ -96,6 +96,8 @@ test("review requires explicit selection, supports switching, and preserves the 
   assert.equal(workflow.select("object_02"), true);
   const selected = workflow.confirm(captures, "2026-11-13T10:00:00.000Z");
   assert.equal(selected?.objectId, "object_02");
+  assert.deepEqual(selected?.peerDetections.map((peer) => peer.id), ["object_01"]);
+  assert.notEqual(selected?.peerDetections[0], undefined);
   assert.equal(selected?.captures.length, 3);
   assert.equal(selected?.captures[0].snapshot.id, captures[0].snapshot.id);
   assert.equal(selected?.captures[0].snapshot.camera.position.x, 1);

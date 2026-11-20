@@ -169,7 +169,7 @@ export interface MeasurementRecord {
 }
 
 export interface ObbRecord {
-  readonly method: "pca" | "aabb-fallback";
+  readonly method: "pca" | "upright" | "aabb-fallback";
   readonly position: Vec3Record;
   readonly quaternion: QuatRecord;
   readonly size: Vec3Record;

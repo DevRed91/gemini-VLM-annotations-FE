@@ -6,11 +6,21 @@ export interface OBBFitOptions {
   margin?: number;
   /** Fewer points than this uses an AABB fallback. Default 4. */
   minPoints?: number;
+  /** "pca" preserves the historical free-orientation fit; "upright" only yaws around world +Y. */
+  mode?: "pca" | "upright";
+  /** Upright mode: fraction trimmed from each side of the horizontal extents. Default 0.01. */
+  trim?: number;
+  /** Upright mode: fraction trimmed from each side of height. Default 0.02. */
+  trimY?: number;
+  /** Upright mode: skip trimming below this point count. Default 40. */
+  minTrimPoints?: number;
+  /** Fit only a dominant thin horizontal point layer when it contains >= 50% of points. Default false. */
+  dominantLayer?: boolean;
 }
 
 export interface OBBFitResult {
   obb: OBB;
-  method: "pca" | "aabb-fallback";
+  method: "pca" | "upright" | "aabb-fallback";
   eigenvalues: [number, number, number];
 }
 
@@ -68,6 +78,100 @@ function aabbFallback(
   return { obb, method: "aabb-fallback", eigenvalues: [0, 0, 0] };
 }
 
+/** Quantile of an ascending-sorted array (nearest-rank, clamped). */
+function quantile(sorted: number[], q: number): number {
+  const i = Math.min(sorted.length - 1, Math.max(0, Math.floor(q * sorted.length)));
+  return sorted[i];
+}
+
+/** Trimmed [lo, hi] extent of values (mutates order of `values`). */
+function trimmedRange(values: number[], trim: number): [number, number] {
+  values.sort((a, b) => a - b);
+  return [quantile(values, trim), quantile(values, 1 - trim)];
+}
+
+/** Densest contiguous horizontal layer, or the input unchanged when it does not dominate. */
+export function dominantHorizontalLayer(
+  points: readonly THREE.Vector3[],
+  binSize = 0.04,
+  edgeFraction = 0.2,
+): readonly THREE.Vector3[] {
+  if (points.length < 40) return points;
+  let yMin = Infinity;
+  let yMax = -Infinity;
+  for (const point of points) {
+    yMin = Math.min(yMin, point.y);
+    yMax = Math.max(yMax, point.y);
+  }
+  const range = yMax - yMin;
+  if (!(range > binSize * 2)) return points;
+  const binCount = Math.floor(range / binSize) + 1;
+  const bins = new Array<number>(binCount).fill(0);
+  const binOf = (y: number) => Math.min(binCount - 1, Math.floor((y - yMin) / binSize));
+  for (const point of points) bins[binOf(point.y)]++;
+  let peak = 0;
+  for (let i = 1; i < binCount; i++) if (bins[i] > bins[peak]) peak = i;
+  const threshold = bins[peak] * edgeFraction;
+  let lo = peak;
+  let hi = peak;
+  while (lo > 0 && bins[lo - 1] >= threshold) lo--;
+  while (hi < binCount - 1 && bins[hi + 1] >= threshold) hi++;
+  const layer = points.filter((point) => {
+    const bin = binOf(point.y);
+    return bin >= lo && bin <= hi;
+  });
+  const thickness = (hi - lo + 1) * binSize;
+  return layer.length >= points.length * 0.5 && thickness < range * 0.5 ? layer : points;
+}
+
+function fitUpright(
+  points: readonly THREE.Vector3[],
+  margin: number,
+  trimOption: number,
+  trimYOption: number,
+  minTrimPoints: number,
+): OBBFitResult {
+  const count = points.length;
+  const clampTrim = (value: number) => count >= minTrimPoints ? Math.min(0.25, Math.max(0, value)) : 0;
+  const trim = clampTrim(trimOption);
+  const trimY = clampTrim(trimYOption);
+  const us = new Array<number>(count);
+  const vs = new Array<number>(count);
+  const evaluate = (theta: number) => {
+    const c = Math.cos(theta);
+    const s = Math.sin(theta);
+    for (let i = 0; i < count; i++) {
+      us[i] = points[i].x * c - points[i].z * s;
+      vs[i] = points[i].x * s + points[i].z * c;
+    }
+    const [u0, u1] = trimmedRange(us, trim);
+    const [v0, v1] = trimmedRange(vs, trim);
+    return { area: (u1 - u0) * (v1 - v0), u0, u1, v0, v1 };
+  };
+
+  const steps = 90;
+  const base = evaluate(0);
+  let best = { theta: 0, ...base };
+  let worstArea = base.area;
+  for (let k = 1; k < steps; k++) {
+    const theta = (k / steps) * (Math.PI / 2);
+    const result = evaluate(theta);
+    worstArea = Math.max(worstArea, result.area);
+    if (result.area < best.area) best = { theta, ...result };
+  }
+  if (worstArea > 0 && (worstArea - best.area) / worstArea < 0.08) best = { theta: 0, ...base };
+
+  const [y0, y1] = trimmedRange(points.map((point) => point.y), trimY);
+  const c = Math.cos(best.theta);
+  const s = Math.sin(best.theta);
+  const uc = (best.u0 + best.u1) / 2;
+  const vc = (best.v0 + best.v1) / 2;
+  const position = new THREE.Vector3(uc * c + vc * s, (y0 + y1) / 2, -uc * s + vc * c);
+  const size = new THREE.Vector3(best.u1 - best.u0, y1 - y0, best.v1 - best.v0).addScalar(margin * 2);
+  const quaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), best.theta);
+  return { obb: new OBB({ position, quaternion, size }), method: "upright", eigenvalues: [0, 0, 0] };
+}
+
 /** Fit a world-space OBB using PCA, with a degenerate-input AABB fallback. */
 export function fitOBB(
   points: readonly THREE.Vector3[],
@@ -77,6 +181,15 @@ export function fitOBB(
   const minPoints = opts.minPoints ?? 4;
   if (points.length === 0) return null;
   if (points.length < minPoints) return aabbFallback(points, margin);
+  if (opts.mode === "upright") {
+    return fitUpright(
+      opts.dominantLayer ? dominantHorizontalLayer(points) : points,
+      margin,
+      opts.trim ?? 0.01,
+      opts.trimY ?? 0.02,
+      opts.minTrimPoints ?? 40,
+    );
+  }
 
   const n = points.length;
   const mean = new THREE.Vector3();

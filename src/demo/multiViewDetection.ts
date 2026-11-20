@@ -27,6 +27,8 @@ export interface SelectedMultiViewObject {
   readonly label: string;
   readonly description: string;
   readonly observations: readonly MultiViewObservation[];
+  /** Other detections from the same response, retained for geometric ownership checks. */
+  readonly peerDetections: readonly MultiViewObjectDetection[];
   /** Original snapshots retain their images, dimensions, camera and scene metadata. */
   readonly captures: readonly PresentationCapture[];
   readonly confirmedAtIso: string;
@@ -427,6 +429,7 @@ export class MultiViewDetectionWorkflow {
       label: object.label,
       description: object.description,
       observations: object.observations,
+      peerDetections: Object.freeze(this.detections.filter((entry) => entry.id !== object.id)),
       captures: Object.freeze([...retainedCaptures]),
       confirmedAtIso,
     });

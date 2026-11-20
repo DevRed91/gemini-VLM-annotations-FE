@@ -21,6 +21,8 @@ export const dyno = {
 export interface FakeGaussian {
   center: [number, number, number];
   opacity?: number;
+  scales?: [number, number, number];
+  quaternion?: [number, number, number, number];
 }
 
 /** Splats are spheres of `radius`; raycast returns every sphere hit like Spark does. */
@@ -45,11 +47,13 @@ export class SplatMesh extends THREE.Object3D {
 
   forEachSplat(cb: (i: number, c: THREE.Vector3, s: THREE.Vector3, q: THREE.Quaternion, o: number, col: THREE.Color) => void) {
     const c = new THREE.Vector3();
-    const s = new THREE.Vector3(1, 1, 1);
+    const s = new THREE.Vector3();
     const q = new THREE.Quaternion();
     const col = new THREE.Color();
     this.gaussians.forEach((g, i) => {
       c.set(...g.center);
+      s.set(...(g.scales ?? [this.radius, this.radius, this.radius]));
+      q.set(...(g.quaternion ?? [0, 0, 0, 1]));
       cb(i, c, s, q, g.opacity ?? 1, col);
     });
   }

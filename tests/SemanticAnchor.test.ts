@@ -119,7 +119,7 @@ function selection(
 ): SelectedMultiViewObject {
   return Object.freeze({
     objectId, label, description: `${label} description`,
-    observations, captures: Object.freeze([...captures]), confirmedAtIso: "2026-11-13T10:00:00.000Z",
+    observations, peerDetections: [], captures: Object.freeze([...captures]), confirmedAtIso: "2026-11-13T10:00:00.000Z",
   });
 }
 

@@ -734,7 +734,7 @@ export class SplatViewer {
 
     // These paths stay dynamically imported so the dev-only multi-view
     // implementation does not join the production annotation bundle.
-    const [{ liftMultiViewGaussians }, { buildLifterViewsFromSelection }] = await Promise.all([
+    const [{ liftMultiViewGaussians }, { buildLifterViewsFromSelection, buildPeerLifterViewsFromSelection }] = await Promise.all([
       import("./segmentation/multiViewGaussianLifter.ts"),
       import("./demo/multiViewToLifterViews.ts"),
     ]);
@@ -743,6 +743,7 @@ export class SplatViewer {
       splat,
       worldGeneration: generation,
       views: buildLifterViewsFromSelection(selected),
+      peerObjects: buildPeerLifterViewsFromSelection(selected),
     });
     if (!current()) return null;
 

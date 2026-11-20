@@ -27,8 +27,13 @@ export interface ViewObservation {
   readonly bboxNormalized?: readonly [number, number, number, number];
 }
 
+/** One peer object's observation in one of the same frozen capture views. */
+export interface PeerViewObservation extends ViewObservation {
+  readonly objectId: string;
+}
+
 export interface MultiViewLiftOptions {
-  /** Max mask-constrained probe rays per view. Default 20. Each ray costs ~35 ms on a large splat. */
+  /** Max mask-constrained probe rays per view (target and each peer). Default 40. Each ray costs ~35 ms on a large splat. */
   raysPerView?: number;
   /** Search-volume padding as a fraction of the largest surface-hit extent. Default 0.15. */
   bboxPaddingRatio?: number;
@@ -36,8 +41,39 @@ export interface MultiViewLiftOptions {
   minOpacity?: number;
   /** A Gaussian more than this (scene units, along the view axis) behind the visible surface abstains. Default 0.25. */
   depthToleranceSceneUnits?: number;
+  /**
+   * Inset each side of a rectangular box mask (target and peers) before Stage A sampling. Default 0.025:
+   * a larger inset leaves the rim of a wide flat surface (tabletop corners) without nearby probes.
+   */
+  boxInsetRatio?: number;
+  /** Estimate per-view tolerance from Stage A depth IQR; zero-variance samples use depthToleranceSceneUnits. Default true. */
+  useAdaptiveDepthTolerance?: boolean;
+  /** Peer must be nearer by more than this scene-unit margin to own a candidate. Default 0. */
+  peerOwnershipMargin?: number;
   /** Positive (foreground, unoccluded) votes required. Default 1. */
   minPositiveVotes?: number;
+  /**
+   * A peer whose mask has IoU >= this with the target's mask in every shared view is treated as a duplicate
+   * or parent label ("table" vs "dining table") and ignored. One-sided containment is deliberately not used:
+   * a tissue box on a table is fully contained in the table's mask and must stay a competing peer. Default 0.7.
+   */
+  duplicatePeerIoU?: number;
+  /**
+   * A view's peers may claim at most this fraction of that view's Stage A target hits; the claims with the
+   * weakest depth advantage are returned to the target. 1 disables the cap. Default 0.85.
+   */
+  maxPeerHitConsumptionRatio?: number;
+  /**
+   * Nearest-sample surface lookups ignore samples farther than this many mean sample spacings in UV
+   * (spacing = sqrt(mask area / raysPerView)), so sparse rays cannot match across gaps. Default 5, wide
+   * enough that the outer rim of a box-masked surface still resolves a local surface depth.
+   */
+  uvLookupSpacingFactor?: number;
+  /**
+   * Fit the upright OBB to the densest horizontal layer only. Off by default: it collapses multi-part
+   * objects (sofa seat + backrest, shelving) to a slab. Default false.
+   */
+  dominantLayer?: boolean;
 }
 
 export interface MultiViewLiftInput {
@@ -45,6 +81,8 @@ export interface MultiViewLiftInput {
   /** Current world generation of the viewer; snapshots from any other generation are excluded. */
   readonly worldGeneration: number;
   readonly views: readonly ViewObservation[];
+  /** Sibling detections from the same Gemini response, mapped to the same captures. */
+  readonly peerObjects?: readonly PeerViewObservation[];
   readonly options?: MultiViewLiftOptions;
   /** Override the splat raycaster (tests). Defaults to `createSplatCaster(splat)`. */
   readonly cast?: CastFn;
@@ -73,9 +111,31 @@ export interface MultiViewLiftDiagnostics {
   readonly acceptedCount: number;
   /** Candidates with at least one unoccluded view that placed them on background. */
   readonly rejectedBackgroundCount: number;
+  /** Candidate centers owned by a nearer/closer peer object's surface. */
+  readonly rejectedPeerCount: number;
+  /** Candidate primitives above the robust scene-relative scale fence (upper-slab primitives are exempt). */
+  readonly rejectedScaleCount: number;
+  /** Wide flat primitives at the bottom of the search box, below a distinct upper support slab (floor under a table). */
+  readonly rejectedFloorCount: number;
+  /** Thin horizontal primitives on the upper support slab spared from the scale fence that it would otherwise have rejected. */
+  readonly slabScaleExemptCount: number;
+  /** Estimated upper horizontal support plane (75th-percentile Stage A hit Y), or null with no hits. */
+  readonly upperSurfaceY: number | null;
+  /** Lowest Stage A inlier hit Y, or null with no hits. */
+  readonly minHitY: number | null;
+  /** Target Stage A hits removed because a peer surface was nearer or co-surface in the same view. */
+  readonly peerSurfaceHitsRemoved: number;
+  /** Peer views skipped for invisibility, stale snapshots, or unusable masks. */
+  readonly excludedPeerViews: number;
+  /** Peer object ids ignored as duplicate/parent labels of the target (mask IoU >= duplicatePeerIoU in every shared view). */
+  readonly duplicatePeerIds: readonly string[];
+  /** Views where the peer-consumption cap returned some peer-claimed hits to the target. */
+  readonly peerOwnershipCappedViews: readonly LiftView[];
+  /** Effective per-view Stage B depth thresholds (scene units). */
+  readonly depthToleranceByView: Readonly<Partial<Record<LiftView, number>>>;
   /** Candidates (not already background-rejected) that ended below minPositiveVotes. */
   readonly rejectedInsufficientVotesCount: number;
-  /** Candidates for which at least one view abstained because the Gaussian lies behind that view's surface. */
+  /** Candidates for which at least one view abstained because the Gaussian lies behind a target or peer surface. */
   readonly abstainedOccludedCount: number;
   readonly durationMs: number;
 }
@@ -95,16 +155,30 @@ interface ResolvedOptions {
   bboxPaddingRatio: number;
   minOpacity: number;
   depthToleranceSceneUnits: number;
+  boxInsetRatio: number;
+  useAdaptiveDepthTolerance: boolean;
+  peerOwnershipMargin: number;
   minPositiveVotes: number;
+  duplicatePeerIoU: number;
+  maxPeerHitConsumptionRatio: number;
+  uvLookupSpacingFactor: number;
+  dominantLayer: boolean;
 }
 
 function resolveOptions(options: MultiViewLiftOptions = {}): ResolvedOptions {
   const resolved = {
-    raysPerView: options.raysPerView ?? 20,
+    raysPerView: options.raysPerView ?? 40,
     bboxPaddingRatio: options.bboxPaddingRatio ?? 0.15,
     minOpacity: options.minOpacity ?? 0.05,
     depthToleranceSceneUnits: options.depthToleranceSceneUnits ?? 0.25,
+    boxInsetRatio: options.boxInsetRatio ?? 0.025,
+    useAdaptiveDepthTolerance: options.useAdaptiveDepthTolerance ?? true,
+    peerOwnershipMargin: options.peerOwnershipMargin ?? 0,
     minPositiveVotes: options.minPositiveVotes ?? 1,
+    duplicatePeerIoU: options.duplicatePeerIoU ?? 0.7,
+    maxPeerHitConsumptionRatio: options.maxPeerHitConsumptionRatio ?? 0.85,
+    uvLookupSpacingFactor: options.uvLookupSpacingFactor ?? 5,
+    dominantLayer: options.dominantLayer ?? false,
   };
   if (!Number.isInteger(resolved.raysPerView) || resolved.raysPerView < 1) {
     throw new RangeError("raysPerView must be a positive integer");
@@ -118,9 +192,28 @@ function resolveOptions(options: MultiViewLiftOptions = {}): ResolvedOptions {
   if (!Number.isFinite(resolved.depthToleranceSceneUnits) || resolved.depthToleranceSceneUnits < 0) {
     throw new RangeError("depthToleranceSceneUnits must be a finite, non-negative number");
   }
+  if (!Number.isFinite(resolved.boxInsetRatio) || resolved.boxInsetRatio < 0 || resolved.boxInsetRatio >= 0.5) {
+    throw new RangeError("boxInsetRatio must be finite and in [0, 0.5)");
+  }
+  if (typeof resolved.useAdaptiveDepthTolerance !== "boolean") {
+    throw new TypeError("useAdaptiveDepthTolerance must be a boolean");
+  }
+  if (!Number.isFinite(resolved.peerOwnershipMargin) || resolved.peerOwnershipMargin < 0) {
+    throw new RangeError("peerOwnershipMargin must be finite and non-negative");
+  }
   if (!Number.isInteger(resolved.minPositiveVotes) || resolved.minPositiveVotes < 1) {
     throw new RangeError("minPositiveVotes must be a positive integer");
   }
+  if (!Number.isFinite(resolved.duplicatePeerIoU) || resolved.duplicatePeerIoU <= 0 || resolved.duplicatePeerIoU > 1) {
+    throw new RangeError("duplicatePeerIoU must be finite and in (0, 1]");
+  }
+  if (!Number.isFinite(resolved.maxPeerHitConsumptionRatio) || resolved.maxPeerHitConsumptionRatio < 0 || resolved.maxPeerHitConsumptionRatio > 1) {
+    throw new RangeError("maxPeerHitConsumptionRatio must be finite and in [0, 1]");
+  }
+  if (!Number.isFinite(resolved.uvLookupSpacingFactor) || resolved.uvLookupSpacingFactor <= 0) {
+    throw new RangeError("uvLookupSpacingFactor must be finite and positive");
+  }
+  if (typeof resolved.dominantLayer !== "boolean") throw new TypeError("dominantLayer must be a boolean");
   return resolved;
 }
 
@@ -144,13 +237,19 @@ function hasForeground(mask: DecodedMask): boolean {
 }
 
 /** Rectangular stand-in mask from a Gemini-convention box. Coarse; only used when no SAM mask exists. */
-function maskFromBox(box: readonly number[]): DecodedMask {
+function maskFromBox(box: readonly number[], insetRatio = 0): DecodedMask {
   if (box.length !== 4 || !box.every((v) => Number.isFinite(v) && v >= 0 && v <= 1) || !(box[0] < box[2]) || !(box[1] < box[3])) {
     throw new RangeError("bboxNormalized must be [ymin, xmin, ymax, xmax] fractions with min < max");
   }
   const n = BBOX_MASK_RESOLUTION;
   const data = new Uint8Array(n * n);
-  const [ymin, xmin, ymax, xmax] = box;
+  const [rawYMin, rawXMin, rawYMax, rawXMax] = box;
+  const insetX = (rawXMax - rawXMin) * insetRatio;
+  const insetY = (rawYMax - rawYMin) * insetRatio;
+  const ymin = rawYMin + insetY;
+  const xmin = rawXMin + insetX;
+  const ymax = rawYMax - insetY;
+  const xmax = rawXMax - insetX;
   for (let y = 0; y < n; y++) {
     const v = (y + 0.5) / n;
     if (v < ymin || v > ymax) continue;
@@ -282,6 +381,7 @@ interface DepthSample {
   readonly v: number;
   /** Depth along the capture camera's viewing axis, scene units. */
   readonly depth: number;
+  readonly point: SnapshotVector3;
 }
 
 /** Column-major 4x4 (THREE / snapshot layout) applied to a point; returns [x, y, z, w]. */
@@ -300,6 +400,282 @@ interface ViewState {
   readonly mask: DecodedMask;
   samples: DepthSample[];
   rawHits: number;
+  /** Mean UV spacing of this view's successful Stage A hits: sqrt(mask area / hits). Set after sampling. */
+  spacing: number;
+  /** Max UV distance for nearest-sample surface lookups (see `uvLookupSpacingFactor`). Set after sampling. */
+  lookupRadius: number;
+  /** Foreground area as a fraction of the image. */
+  readonly areaFraction: number;
+  /** Stage A hits that ended up claimed by a peer (after the consumption cap). */
+  peerOwnedRemoved: number;
+}
+
+interface PeerState extends ViewState {
+  readonly objectId: string;
+}
+
+interface GaussianCandidate {
+  readonly index: number;
+  readonly center: SnapshotVector3;
+  readonly covarianceWorld: readonly number[];
+  /** Longest transformed one-sigma axis, in world units. */
+  readonly maxScale: number;
+  /** One-sigma extent along world +Y. */
+  readonly verticalScale: number;
+  /** Largest one-sigma extent within the world XZ plane. */
+  readonly horizontalScale: number;
+}
+
+function quantile(values: readonly number[], q: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(q * sorted.length)))];
+}
+
+/**
+ * Per-view Stage B depth tolerance, scene units:
+ *   max(sceneNoiseFloor, 0.5 * IQR + localGradientAllowance)
+ * - IQR is the spread of Stage A hit depths. A sloped surface (tabletop seen from
+ *   a low angle) legitimately spans depth, and a nearest-sample surface lookup is
+ *   off by a large fraction of that spread, so half the IQR is allowed.
+ * - localGradientAllowance = median nearest-neighbour depth slope (depth per UV)
+ *   times the probe spacing, capped at the IQR: the extra error a lookup makes
+ *   when the nearest probe is a spacing away on a steep surface.
+ * - sceneNoiseFloor = max(1e-4, 0.5% of the median depth, 2% of the hit extent):
+ *   ray jitter that scales with how far away and how big the scene is. The lifter
+ *   additionally floors the result at 2.5x the median candidate primitive size.
+ * When the spread is within that floor the hits are effectively flat, which says
+ * nothing about primitive thickness, so the configured `fallback` is used.
+ */
+function adaptiveDepthTolerance(samples: readonly DepthSample[], fallback: number, spacing: number): number {
+  const depths = samples.map((sample) => sample.depth);
+  const centerDepth = median(depths);
+  let extent = 0;
+  for (const a of samples) for (const b of samples) extent = Math.max(extent, distance3(a.point, b.point));
+  const noiseFloor = Math.max(1e-4, centerDepth * 0.005, extent * 0.02);
+  const iqr = quantile(depths, 0.75) - quantile(depths, 0.25);
+  if (iqr <= noiseFloor) return fallback;
+  const slopes: number[] = [];
+  for (const a of samples) {
+    let best = Infinity;
+    let slope = 0;
+    for (const b of samples) {
+      if (a === b) continue;
+      const d = Math.hypot(a.u - b.u, a.v - b.v);
+      if (d > 0 && d < best) {
+        best = d;
+        slope = Math.abs(a.depth - b.depth) / d;
+      }
+    }
+    if (best < Infinity) slopes.push(slope);
+  }
+  const gradientAllowance = slopes.length > 0 ? Math.min(iqr, median(slopes) * spacing) : 0;
+  return Math.max(noiseFloor, 0.5 * iqr + gradientAllowance);
+}
+
+/** Nearest Stage A sample in UV, or null when none lies within `maxUvDistance` (no local surface to judge by). */
+function sampleNearest(samples: readonly DepthSample[], u: number, v: number, maxUvDistance: number): DepthSample | null {
+  let nearest: DepthSample | null = null;
+  let best = maxUvDistance * maxUvDistance;
+  for (const sample of samples) {
+    const distance = (sample.u - u) ** 2 + (sample.v - v) ** 2;
+    if (distance <= best) {
+      best = distance;
+      nearest = sample;
+    }
+  }
+  return nearest;
+}
+
+/**
+ * Front-most Stage A sample within `maxUvDistance`, or null. Used for a peer's local surface: its mask
+ * also contains background seen through gaps (chair legs, openings), so the UV-nearest hit can be a far
+ * background hit; the peer's visible surface is the nearest layer in the neighbourhood.
+ */
+function sampleFrontMost(samples: readonly DepthSample[], u: number, v: number, maxUvDistance: number): DepthSample | null {
+  let front: DepthSample | null = null;
+  const limit = maxUvDistance * maxUvDistance;
+  for (const sample of samples) {
+    if ((sample.u - u) ** 2 + (sample.v - v) ** 2 > limit) continue;
+    if (!front || sample.depth < front.depth) front = sample;
+  }
+  return front;
+}
+
+/**
+ * Multiples of the median candidate primitive size granted as depth slack (see Stage B tolerance floor).
+ * 2.5 rather than ~1 radius: on a surface seen at a grazing angle the nearest-sample lookup is off by
+ * several primitive radii along the view axis, and a tighter floor makes those views abstain.
+ */
+const PRIMITIVE_DEPTH_SLACK = 2.5;
+
+// Support-slab heuristics. All distances are fractions of the largest Stage A hit extent so they track scene scale.
+/** Half-thickness of the "on the upper support plane" band. */
+const SLAB_TOLERANCE_FRACTION = 0.04;
+/** A primitive is flat/horizontal when its vertical sigma is at most this fraction of its horizontal sigma. */
+const FLAT_PRIMITIVE_RATIO = 0.35;
+/** Slab primitives may be this fraction of the horizontal hit extent wide (the normal fence stops at 0.25 of the extent). */
+const SLAB_MAX_HORIZONTAL_SCALE_FRACTION = 0.5;
+/** Height above the lowest hit that counts as "the floor band". */
+const FLOOR_MARGIN_FRACTION = 0.05;
+/** The floor band is only filtered when the upper slab sits at least this many floor margins above the lowest hit. */
+const FLOOR_SEPARATION_MARGINS = 3;
+/** Flat primitives wider than this fraction of the hit extent are "wide" for floor rejection. */
+const FLOOR_WIDE_EXTENT_FRACTION = 0.04;
+
+const OVERLAP_GRID = 64;
+
+/** Foreground IoU of two masks compared on a common normalized grid (resolutions may differ). */
+function maskIoU(a: DecodedMask, b: DecodedMask): number {
+  let intersection = 0;
+  let union = 0;
+  for (let y = 0; y < OVERLAP_GRID; y++) {
+    const v = (y + 0.5) / OVERLAP_GRID;
+    for (let x = 0; x < OVERLAP_GRID; x++) {
+      const u = (x + 0.5) / OVERLAP_GRID;
+      const inA = maskAt(a, u, v);
+      const inB = maskAt(b, u, v);
+      if (inA && inB) intersection++;
+      if (inA || inB) union++;
+    }
+  }
+  return union === 0 ? 0 : intersection / union;
+}
+
+function maskAreaFraction(mask: DecodedMask): number {
+  let count = 0;
+  for (let i = 0; i < mask.data.length; i++) if (mask.data[i] === 1) count++;
+  return count / mask.data.length;
+}
+
+function makeViewState(
+  view: LiftView,
+  snapshot: ViewSnapshot,
+  mask: DecodedMask,
+  options: ResolvedOptions,
+): ViewState {
+  const areaFraction = maskAreaFraction(mask);
+  const spacing = Math.sqrt(areaFraction / options.raysPerView);
+  return {
+    view,
+    snapshot,
+    mask,
+    samples: [],
+    rawHits: 0,
+    areaFraction,
+    spacing,
+    lookupRadius: spacing * options.uvLookupSpacingFactor,
+    peerOwnedRemoved: 0,
+  };
+}
+
+/** Real hit density, not probe density: rays that miss the splat leave gaps the lookup must not bridge. */
+function finalizeSpacing(state: ViewState, options: ResolvedOptions): void {
+  state.spacing = Math.sqrt(state.areaFraction / Math.max(1, state.rawHits));
+  state.lookupRadius = state.spacing * options.uvLookupSpacingFactor;
+}
+
+function distanceSq3(a: SnapshotVector3, b: SnapshotVector3): number {
+  return (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2;
+}
+
+function distance3(a: SnapshotVector3, b: SnapshotVector3): number {
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+/** World covariance = L R diag(scale²) Rᵀ Lᵀ (row-major 3x3). */
+function gaussianWorldCovariance(
+  scales: THREE.Vector3,
+  quaternion: THREE.Quaternion,
+  world: THREE.Matrix4,
+): { covariance: number[]; maxScale: number } {
+  const q = quaternion;
+  const x = q.x, y = q.y, z = q.z, w = q.w;
+  const rotation = [
+    1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+    2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+    2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y),
+  ];
+  const e = world.elements;
+  const linear = [e[0], e[4], e[8], e[1], e[5], e[9], e[2], e[6], e[10]];
+  const axes = new Array<number>(9).fill(0);
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+    for (let k = 0; k < 3; k++) axes[r * 3 + c] += linear[r * 3 + k] * rotation[k * 3 + c];
+  }
+  const size = [Math.abs(scales.x), Math.abs(scales.y), Math.abs(scales.z)];
+  const covariance = new Array<number>(9).fill(0);
+  let maxScale = 0;
+  for (let c = 0; c < 3; c++) {
+    let axisLength = 0;
+    for (let r = 0; r < 3; r++) axisLength += axes[r * 3 + c] ** 2;
+    maxScale = Math.max(maxScale, Math.sqrt(axisLength) * size[c]);
+    for (let r = 0; r < 3; r++) for (let k = 0; k < 3; k++) {
+      covariance[r * 3 + k] += axes[r * 3 + c] * axes[k * 3 + c] * size[c] ** 2;
+    }
+  }
+  return { covariance, maxScale };
+}
+
+/** One-sigma extents of a row-major world covariance along +Y and within the XZ plane. */
+function verticalHorizontalSigma(covariance: readonly number[]): { vertical: number; horizontal: number } {
+  const xx = covariance[0], xz = covariance[2], zz = covariance[8];
+  const mean = (xx + zz) / 2;
+  const largest = mean + Math.sqrt(((xx - zz) / 2) ** 2 + xz * xz);
+  return { vertical: Math.sqrt(Math.max(0, covariance[4])), horizontal: Math.sqrt(Math.max(0, largest)) };
+}
+
+function transformCovariance(covariance: readonly number[], matrix: readonly number[]): number[] {
+  const linear = [matrix[0], matrix[4], matrix[8], matrix[1], matrix[5], matrix[9], matrix[2], matrix[6], matrix[10]];
+  const first = new Array<number>(9).fill(0);
+  const result = new Array<number>(9).fill(0);
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+    for (let k = 0; k < 3; k++) first[r * 3 + c] += linear[r * 3 + k] * covariance[k * 3 + c];
+  }
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+    for (let k = 0; k < 3; k++) result[r * 3 + c] += first[r * 3 + k] * linear[c * 3 + k];
+  }
+  return result;
+}
+
+/** Approximate normalized-image one-sigma footprint using the perspective Jacobian. */
+function projectedSigma(
+  state: ViewState,
+  covarianceWorld: readonly number[],
+  clip: readonly [number, number, number, number],
+): { u: number; v: number } {
+  const covarianceView = transformCovariance(covarianceWorld, state.snapshot.camera.inverseWorldMatrix);
+  const [x, y, , w] = clip;
+  if (!(w > 0)) return { u: 0, v: 0 };
+  const p = state.snapshot.camera.projectionMatrix;
+  const jU = [
+    0.5 * (p[0] * w - x * p[3]) / (w * w),
+    0.5 * (p[4] * w - x * p[7]) / (w * w),
+    0.5 * (p[8] * w - x * p[11]) / (w * w),
+  ];
+  const jV = [
+    -0.5 * (p[1] * w - y * p[3]) / (w * w),
+    -0.5 * (p[5] * w - y * p[7]) / (w * w),
+    -0.5 * (p[9] * w - y * p[11]) / (w * w),
+  ];
+  const variance = (j: number[]) => {
+    let total = 0;
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) total += j[r] * covarianceView[r * 3 + c] * j[c];
+    return Math.max(0, total);
+  };
+  return { u: Math.sqrt(variance(jU)), v: Math.sqrt(variance(jV)) };
+}
+
+/** Fraction of a small deterministic Gaussian footprint that falls on foreground. */
+function maskCoverage(mask: DecodedMask, u: number, v: number, sigmaU: number, sigmaV: number): number {
+  const offsets: readonly [number, number][] = [
+    [0, 0], [1, 0], [-1, 0], [0, 1], [0, -1],
+    [0.7, 0.7], [0.7, -0.7], [-0.7, 0.7], [-0.7, -0.7],
+  ];
+  let foreground = 0;
+  for (const [du, dv] of offsets) {
+    if (maskAt(mask, u + du * sigmaU, v + dv * sigmaV)) foreground++;
+  }
+  return foreground / offsets.length;
 }
 
 // ------------------------------------------------------------------- lifter
@@ -339,6 +715,8 @@ export async function liftMultiViewGaussians(input: MultiViewLiftInput): Promise
   const excluded: ExcludedView[] = [];
   const bboxFallbackViews: LiftView[] = [];
   const states: ViewState[] = [];
+  const peerStates: PeerState[] = [];
+  let excludedPeerViews = 0;
 
   // ---- snapshot validation: exclude, never mix coordinate frames
   for (const observation of views) {
@@ -359,7 +737,7 @@ export async function liftMultiViewGaussians(input: MultiViewLiftInput): Promise
         if (hasForeground(observation.mask)) mask = observation.mask;
       }
       if (!mask && observation.bboxNormalized) {
-        mask = maskFromBox(observation.bboxNormalized);
+        mask = maskFromBox(observation.bboxNormalized, options.boxInsetRatio);
         bboxFallbackViews.push(observation.view);
       }
     } catch (error) {
@@ -370,14 +748,77 @@ export async function liftMultiViewGaussians(input: MultiViewLiftInput): Promise
       excluded.push({ view: observation.view, reason: "no foreground mask or bbox" });
       continue;
     }
-    states.push({ view: observation.view, snapshot: observation.snapshot, mask, samples: [], rawHits: 0 });
+    states.push(makeViewState(observation.view, observation.snapshot, mask, options));
+  }
+
+  const seenPeerViews = new Set<string>();
+  for (const observation of input.peerObjects ?? []) {
+    const key = `${observation.objectId}\u0000${observation.view}`;
+    if (!observation.objectId || seenPeerViews.has(key)) {
+      excludedPeerViews++;
+      continue;
+    }
+    seenPeerViews.add(key);
+    if (!observation.visible) {
+      excludedPeerViews++;
+      continue;
+    }
+    try {
+      assertCaptureCurrent(observation.snapshot, live);
+    } catch {
+      excludedPeerViews++;
+      continue;
+    }
+    const matchingTarget = states.find((state) => state.view === observation.view);
+    if (!matchingTarget || matchingTarget.snapshot.id !== observation.snapshot.id) {
+      excludedPeerViews++;
+      continue;
+    }
+    let mask: DecodedMask | null = null;
+    try {
+      if (observation.mask) {
+        validateMask(observation.mask);
+        if (hasForeground(observation.mask)) mask = observation.mask;
+      }
+      if (!mask && observation.bboxNormalized) mask = maskFromBox(observation.bboxNormalized, options.boxInsetRatio);
+    } catch {
+      excludedPeerViews++;
+      continue;
+    }
+    if (!mask) {
+      excludedPeerViews++;
+      continue;
+    }
+    peerStates.push({
+      ...makeViewState(observation.view, observation.snapshot, mask, options),
+      objectId: observation.objectId,
+    });
+  }
+
+  // ---- duplicate / parent peer guard: a peer whose mask matches the target's in
+  // every shared view is the same object under another label; it must not claim
+  // the target's own surface.
+  const duplicatePeerIds: string[] = [];
+  {
+    const byObject = new Map<string, PeerState[]>();
+    for (const peer of peerStates) byObject.set(peer.objectId, [...(byObject.get(peer.objectId) ?? []), peer]);
+    for (const [objectId, group] of byObject) {
+      const isDuplicate = group.every((peer) => {
+        const target = states.find((state) => state.view === peer.view)!;
+        return maskIoU(target.mask, peer.mask) >= options.duplicatePeerIoU;
+      });
+      if (isDuplicate) duplicatePeerIds.push(objectId);
+    }
+    if (duplicatePeerIds.length > 0) {
+      const skip = new Set(duplicatePeerIds);
+      for (let i = peerStates.length - 1; i >= 0; i--) if (skip.has(peerStates[i].objectId)) peerStates.splice(i, 1);
+    }
   }
 
   // ---- Stage A: sparse mask-constrained raycasts
   const cast = input.cast ?? createSplatCaster(splat);
-  const hitPoints: SnapshotVector3[] = [];
   const hitOwner: Array<{ state: ViewState; sample: DepthSample }> = [];
-  for (const state of states) {
+  const sampleState = (state: ViewState) => {
     const { snapshot } = state;
     for (const { u, v } of sampleMaskInterior(state.mask, options.raysPerView)) {
       const ray = generateSnapshotRay(snapshot, u, v, worldGeneration);
@@ -387,25 +828,92 @@ export async function liftMultiViewGaussians(input: MultiViewLiftInput): Promise
       const depth = -view[2];
       if (!(depth > 0) || !Number.isFinite(depth)) continue;
       state.rawHits++;
-      hitPoints.push(hit.point);
-      hitOwner.push({ state, sample: { u, v, depth } });
+      const point = { x: hit.point.x, y: hit.point.y, z: hit.point.z };
+      const sample = { u, v, depth, point };
+      if ("objectId" in state) state.samples.push(sample);
+      else {
+        hitOwner.push({ state, sample });
+      }
     }
+  };
+  for (const state of states) sampleState(state);
+  for (const state of peerStates) sampleState(state);
+  for (const state of [...states, ...peerStates]) finalizeSpacing(state, options);
+
+  // A target-box ray that lands on a peer's nearer visible surface is not a
+  // target surface sample and must not inflate either the search AABB or OBB.
+  // Returns the peer's depth advantage (>= 0) when a peer owns the hit, else null.
+  const peerAdvantage = (state: ViewState, sample: DepthSample): number | null => {
+    for (const peer of peerStates) {
+      if (peer.view !== state.view || peer.samples.length === 0 || !maskAt(peer.mask, sample.u, sample.v)) continue;
+      const peerSample = sampleFrontMost(peer.samples, sample.u, sample.v, peer.lookupRadius);
+      if (!peerSample) continue;
+      // A target hit within the scene noise floor of the peer's local surface
+      // (same depth layer, in either direction) is ambiguous and goes to the peer:
+      // two rays on one splat surface differ by sub-splat depth jitter. Beyond
+      // that, the peer must be strictly nearer. Target hits clearly nearer than
+      // the peer stay with the target.
+      const tieTolerance = Math.max(options.peerOwnershipMargin, 1e-4, sample.depth * 0.005);
+      const advantage = sample.depth - peerSample.depth;
+      if (Math.abs(advantage) <= tieTolerance) return 0;
+      if (advantage > options.peerOwnershipMargin) return advantage;
+    }
+    return null;
+  };
+  const peerOwned = new Set<{ state: ViewState; sample: DepthSample }>();
+  const peerOwnershipCappedViews: LiftView[] = [];
+  for (const state of states) {
+    const hits = hitOwner.filter((hit) => hit.state === state);
+    const owned = hits
+      .map((hit) => ({ hit, advantage: peerAdvantage(state, hit.sample) }))
+      .filter((entry): entry is { hit: typeof entry.hit; advantage: number } => entry.advantage !== null);
+    // Peers may not consume more than the cap of this view's hits; return the
+    // claims with the weakest depth advantage (most likely noise) to the target.
+    const allowed = Math.floor(options.maxPeerHitConsumptionRatio * hits.length);
+    if (owned.length > allowed) {
+      owned.sort((x, y) => x.advantage - y.advantage);
+      owned.splice(0, owned.length - allowed);
+      peerOwnershipCappedViews.push(state.view);
+    }
+    for (const entry of owned) peerOwned.add(entry.hit);
+    state.peerOwnedRemoved = owned.length;
+  }
+  const eligibleHitPoints: SnapshotVector3[] = [];
+  const eligibleHitOwner: Array<{ state: ViewState; sample: DepthSample }> = [];
+  for (const hit of hitOwner) {
+    if (peerOwned.has(hit)) continue;
+    eligibleHitPoints.push(hit.sample.point);
+    eligibleHitOwner.push(hit);
   }
 
   const sparseHitsPerView: Partial<Record<LiftView, number>> = {};
   for (const state of states) sparseHitsPerView[state.view] = state.rawHits;
 
-  const keep = inlierMask(hitPoints);
+  const keep = inlierMask(eligibleHitPoints);
   const inliers: THREE.Vector3[] = [];
   keep.forEach((ok, i) => {
     if (!ok) return;
-    inliers.push(new THREE.Vector3(hitPoints[i].x, hitPoints[i].y, hitPoints[i].z));
-    hitOwner[i].state.samples.push(hitOwner[i].sample);
+    inliers.push(new THREE.Vector3(eligibleHitPoints[i].x, eligibleHitPoints[i].y, eligibleHitPoints[i].z));
+    eligibleHitOwner[i].state.samples.push(eligibleHitOwner[i].sample);
   });
-  const outlierHitsRemoved = hitPoints.length - inliers.length;
+  const peerSurfaceHitsRemoved = hitOwner.length - eligibleHitPoints.length;
+  const outlierHitsRemoved = eligibleHitPoints.length - inliers.length;
   const voting = states.filter((s) => s.samples.length > 0);
+  const depthToleranceByView: Partial<Record<LiftView, number>> = {};
+  for (const state of voting) {
+    depthToleranceByView[state.view] = options.useAdaptiveDepthTolerance
+      ? adaptiveDepthTolerance(state.samples, options.depthToleranceSceneUnits, state.spacing)
+      : options.depthToleranceSceneUnits;
+  }
   for (const state of states) {
-    if (state.samples.length === 0) excluded.push({ view: state.view, reason: "no splat surface hits inside the mask" });
+    if (state.samples.length === 0) {
+      excluded.push({
+        view: state.view,
+        reason: state.peerOwnedRemoved > 0 && state.peerOwnedRemoved === state.rawHits
+          ? "all hits peer-owned"
+          : "no splat surface hits inside the mask",
+      });
+    }
   }
 
   const finish = (
@@ -428,6 +936,17 @@ export async function liftMultiViewGaussians(input: MultiViewLiftInput): Promise
       candidateCount: 0,
       acceptedCount: indices.length,
       rejectedBackgroundCount: 0,
+      rejectedPeerCount: 0,
+      rejectedScaleCount: 0,
+      rejectedFloorCount: 0,
+      slabScaleExemptCount: 0,
+      upperSurfaceY: null,
+      minHitY: null,
+      peerSurfaceHitsRemoved,
+      excludedPeerViews,
+      duplicatePeerIds,
+      peerOwnershipCappedViews,
+      depthToleranceByView,
       rejectedInsufficientVotesCount: 0,
       abstainedOccludedCount: 0,
       durationMs: performance.now() - start,
@@ -450,10 +969,9 @@ export async function liftMultiViewGaussians(input: MultiViewLiftInput): Promise
   splat.updateWorldMatrix(true, false);
   const world = splat.matrixWorld;
   const centre = new THREE.Vector3();
-  const candidateIndex: number[] = [];
-  const candidatePos: number[] = [];
+  const candidates: GaussianCandidate[] = [];
   let scannedCount = 0;
-  splat.forEachSplat((index, center, _scales, _quaternion, opacity) => {
+  splat.forEachSplat((index, center, scales, quaternion, opacity) => {
     scannedCount++;
     // Spark reuses callback objects between invocations: copy immediately.
     centre.copy(center).applyMatrix4(world);
@@ -462,22 +980,148 @@ export async function liftMultiViewGaussians(input: MultiViewLiftInput): Promise
     if (!Number.isFinite(centre.x) || !Number.isFinite(centre.y) || !Number.isFinite(centre.z)) return;
     if (!(alpha >= options.minOpacity)) return;
     if (!box.containsPoint(centre)) return;
-    candidateIndex.push(index);
-    candidatePos.push(centre.x, centre.y, centre.z);
+    // Cheap rejects are done: only now pay for copying the reused callback objects.
+    const scale = scales.clone();
+    const orientation = quaternion.clone();
+    if (![scale.x, scale.y, scale.z, orientation.x, orientation.y, orientation.z, orientation.w].every(Number.isFinite)) return;
+    const primitive = gaussianWorldCovariance(scale, orientation, world);
+    if (!Number.isFinite(primitive.maxScale)) return;
+    const sigma = verticalHorizontalSigma(primitive.covariance);
+    candidates.push({
+      index,
+      center: { x: centre.x, y: centre.y, z: centre.z },
+      covarianceWorld: primitive.covariance,
+      maxScale: primitive.maxScale,
+      verticalScale: sigma.vertical,
+      horizontalScale: sigma.horizontal,
+    });
   });
 
-  // ---- Stage B: projective mask + occlusion consensus
+  // Support-slab geometry from the Stage A inlier hits. The upper support plane
+  // is the 75th-percentile hit height: a tabletop is seen by the top view and by
+  // the low band of every oblique view, so it holds the upper quartile even
+  // when many oblique rays land on legs or floor beneath it.
+  const hitYs = inliers.map((point) => point.y);
+  const upperSurfaceY = quantile(hitYs, 0.75);
+  const minHitY = Math.min(...hitYs);
+  const maxExtent = Math.max(size.x, size.y, size.z);
+  const slabTolerance = SLAB_TOLERANCE_FRACTION * maxExtent;
+  const floorMargin = FLOOR_MARGIN_FRACTION * maxExtent;
+  const onUpperSlab = (y: number) => Math.abs(y - upperSurfaceY) <= slabTolerance;
+  const isFlat = (candidate: GaussianCandidate) =>
+    candidate.verticalScale <= FLAT_PRIMITIVE_RATIO * candidate.horizontalScale;
+  // Only when the slab is clearly above the lowest hit is there a "below the
+  // slab" floor band to clean; an object that sits on the floor itself (rug,
+  // mat) has no separation and its own wide flat splats must survive.
+  const filterFloorBand = upperSurfaceY - minHitY >= FLOOR_SEPARATION_MARGINS * floorMargin;
+  const floorWideScale = FLOOR_WIDE_EXTENT_FRACTION * maxExtent;
+  const isGrazingFloorSplat = (candidate: GaussianCandidate) =>
+    filterFloorBand && candidate.center.y <= minHitY + floorMargin &&
+    isFlat(candidate) && candidate.horizontalScale > floorWideScale;
+  const slabMaxHorizontalScale = SLAB_MAX_HORIZONTAL_SCALE_FRACTION * Math.max(size.x, size.z);
+  const isUpperSlabPrimitive = (candidate: GaussianCandidate) =>
+    onUpperSlab(candidate.center.y) && isFlat(candidate) && candidate.horizontalScale <= slabMaxHorizontalScale;
+
+  // Wide grazing floor splats under the object are removed first so they cannot
+  // inflate the scale distribution that the fence below is derived from.
+  const floorRejected = candidates.filter(isGrazingFloorSplat);
+  const rejectedFloor = floorRejected.length;
+  const floorRejectedSet = new Set(floorRejected);
+  const floorKept = rejectedFloor === 0 ? candidates : candidates.filter((candidate) => !floorRejectedSet.has(candidate));
+
+  // A robust candidate-relative upper fence removes exceptionally broad floor
+  // and wall primitives. The object-relative floor avoids rejecting a valid
+  // anisotropic surface splat solely because its long in-plane axes exceed the
+  // compact bulk distribution. Thin horizontal primitives on the upper support
+  // slab are exempt (up to half the horizontal hit extent): low-texture white
+  // tabletops are reconstructed with a few very wide flat ellipsoids that the
+  // fence would otherwise prune, leaving holes in the surface.
+  const scaleQ1 = quantile(floorKept.map((candidate) => candidate.maxScale), 0.25);
+  const scaleQ3 = quantile(floorKept.map((candidate) => candidate.maxScale), 0.75);
+  const scaleIqr = scaleQ3 - scaleQ1;
+  const scaleFence = Math.max(
+    scaleQ3 + 3 * Math.max(scaleIqr, scaleQ3 * 0.25, 1e-6),
+    maxExtent * 0.25,
+  );
+  let slabScaleExempt = 0;
+  const scaleEligible = floorKept.filter((candidate) => {
+    if (candidate.maxScale <= scaleFence) return true;
+    if (!isUpperSlabPrimitive(candidate)) return false;
+    slabScaleExempt++;
+    return true;
+  });
+  const rejectedScale = floorKept.length - scaleEligible.length;
+  // Primitive-thickness floor for the adaptive tolerance: a Gaussian's centre can sit
+  // about one primitive radius behind the surface its own probe ray reported, so a
+  // tolerance below the typical primitive size would call every surface splat
+  // "occluded". Applied only to adaptive tolerances (a fixed tolerance is the caller's).
+  if (options.useAdaptiveDepthTolerance && scaleEligible.length > 0) {
+    const primitiveFloor = PRIMITIVE_DEPTH_SLACK * median(scaleEligible.map((candidate) => candidate.maxScale));
+    for (const state of voting) {
+      depthToleranceByView[state.view] = Math.max(depthToleranceByView[state.view]!, primitiveFloor);
+    }
+  }
+  const nearestTargetSurfaceDistanceSq = (point: SnapshotVector3): number => {
+    let nearest = Infinity;
+    for (const surface of inliers) nearest = Math.min(nearest, distanceSq3(point, surface));
+    return nearest;
+  };
+  const peersByView = new Map<LiftView, PeerState[]>();
+  const peerCloud = new Map<string, SnapshotVector3[]>();
+  for (const peer of peerStates) {
+    if (peer.samples.length === 0) continue;
+    peerCloud.set(peer.objectId, [...(peerCloud.get(peer.objectId) ?? []), ...peer.samples.map((sample) => sample.point)]);
+    peersByView.set(peer.view, [...(peersByView.get(peer.view) ?? []), peer]);
+  }
+  // Peers whose own surface lies below the upper support plane. Hits on the plane
+  // itself are ambiguous (a peer's 2D box overlapping the tabletop collects
+  // tabletop hits), so only off-plane hits classify a peer: below-plane hits
+  // (seat, legs) must outnumber above-plane hits (a chair back, or a box on the
+  // table). A peer with no off-plane hits (a flat placemat) stays an ordinary peer.
+  const peersBelowSlab = new Set<string>();
+  for (const [objectId, points] of peerCloud) {
+    let below = 0;
+    let above = 0;
+    for (const point of points) {
+      if (point.y < upperSurfaceY - slabTolerance) below++;
+      else if (point.y > upperSurfaceY + slabTolerance) above++;
+    }
+    if (below > above) peersBelowSlab.add(objectId);
+  }
+
+  // ---- Stage B: projective mask + occlusion + peer-ownership consensus
   const accepted: number[] = [];
+  const acceptedCenters: THREE.Vector3[] = [];
   let rejectedBackground = 0;
+  let rejectedPeer = 0;
   let rejectedInsufficient = 0;
   let abstainedOccluded = 0;
-  for (let c = 0; c < candidateIndex.length; c++) {
-    const x = candidatePos[c * 3];
-    const y = candidatePos[c * 3 + 1];
-    const z = candidatePos[c * 3 + 2];
+  for (const candidate of scaleEligible) {
+    const { x, y, z } = candidate.center;
     let positive = 0;
     let penalties = 0;
+    let peerVotes = 0;
     let occluded = false;
+    const candidateOnUpperSlab = onUpperSlab(y);
+    // Candidate-to-surface distances are view-independent (target and each peer's
+    // surface points pooled over all views): compute each once per candidate, lazily.
+    let targetDistanceSq = -1;
+    let targetDistance = -1;
+    const peerDistanceSq = new Map<string, number>();
+    const closerToPeerThanTarget = (objectId: string): boolean => {
+      if (targetDistanceSq < 0) {
+        targetDistanceSq = nearestTargetSurfaceDistanceSq(candidate.center);
+        targetDistance = Math.sqrt(targetDistanceSq);
+      }
+      let peerSq = peerDistanceSq.get(objectId);
+      if (peerSq === undefined) {
+        peerSq = Infinity;
+        for (const point of peerCloud.get(objectId) ?? []) peerSq = Math.min(peerSq, distanceSq3(candidate.center, point));
+        peerDistanceSq.set(objectId, peerSq);
+      }
+      const margin = options.peerOwnershipMargin;
+      return margin === 0 ? peerSq < targetDistanceSq : targetDistance > margin && peerSq < (targetDistance - margin) ** 2;
+    };
     for (const state of voting) {
       const { camera } = state.snapshot;
       const viewPoint = apply(camera.inverseWorldMatrix, x, y, z);
@@ -487,37 +1131,85 @@ export async function liftMultiViewGaussians(input: MultiViewLiftInput): Promise
       const v = 0.5 - (clip[1] / clip[3]) * 0.5;
       if (u < 0 || u > 1 || v < 0 || v > 1) continue; // outside the frame: abstain
       const depth = -viewPoint[2];
+      const tolerance = depthToleranceByView[state.view]!;
 
-      let nearest = state.samples[0];
-      let best = Infinity;
-      for (const sample of state.samples) {
-        const d = (sample.u - u) ** 2 + (sample.v - v) ** 2;
-        if (d < best) {
-          best = d;
-          nearest = sample;
-        }
-      }
-      if (depth - nearest.depth > options.depthToleranceSceneUnits) {
-        occluded = true; // behind this view's visible surface: abstain
+      // The candidate's own view-axis depth is compared with the local surface of
+      // the target and of each peer at the candidate's pixel.
+      const nearest = sampleNearest(state.samples, u, v, state.lookupRadius);
+      if (nearest && depth - nearest.depth > tolerance) {
+        occluded = true; // behind this view's visible target surface: abstain
         continue;
       }
-      if (maskAt(state.mask, u, v)) positive++;
+      const sigma = projectedSigma(state, candidate.covarianceWorld, clip);
+
+      let behindPeer = false;
+      let ownedByPeer = false;
+      for (const peer of peersByView.get(state.view) ?? []) {
+        if (maskCoverage(peer.mask, u, v, sigma.u, sigma.v) < 0.25) continue;
+        const peerSurface = sampleFrontMost(peer.samples, u, v, peer.lookupRadius);
+        if (!peerSurface) continue;
+        // A peer whose surface lies below the upper support plane (a tucked-in chair
+        // seat) neither hides nor owns a candidate sitting on that plane, even where
+        // the two 2D boxes overlap: the overlap is a projection artefact.
+        if (candidateOnUpperSlab && peersBelowSlab.has(peer.objectId)) continue;
+        if (depth - peerSurface.depth > tolerance) behindPeer = true; // hidden by the peer in this view
+        else if (
+          Math.abs(depth - peerSurface.depth) <= tolerance &&
+          closerToPeerThanTarget(peer.objectId)
+        ) ownedByPeer = true;
+      }
+      if (behindPeer) {
+        occluded = true; // occlusion by a peer is not evidence either way: abstain
+        continue;
+      }
+      if (ownedByPeer) {
+        peerVotes++;
+        continue;
+      }
+
+      const targetCoverage = maskCoverage(state.mask, u, v, sigma.u, sigma.v);
+      if (!nearest) {
+        // No target probe within the UV cap: visibility cannot be verified, so a
+        // foreground landing abstains; a background landing still counts against it.
+        if (targetCoverage >= 0.25) continue;
+        penalties++;
+        continue;
+      }
+      if (targetCoverage >= 0.25) positive++;
       else penalties++;
     }
     if (occluded) abstainedOccluded++;
-    if (penalties > 0) rejectedBackground++;
+    // Peer ownership is decided per view and only wins on a strict majority of
+    // the votes cast, so one noisy peer view cannot override the other views.
+    if (peerVotes > positive) rejectedPeer++;
+    else if (penalties > 0) rejectedBackground++;
     else if (positive < options.minPositiveVotes) rejectedInsufficient++;
-    else accepted.push(candidateIndex[c]);
+    else {
+      accepted.push(candidate.index);
+      acceptedCenters.push(new THREE.Vector3(x, y, z));
+    }
   }
 
   accepted.sort((a, b) => a - b);
   const indices = Uint32Array.from(new Set(accepted));
-  return finish(indices, fitOBB(inliers), {
+  // Fit to the accepted Gaussian centres so the box spans the lifted object, not
+  // the inset Stage A probe cloud; fall back to the surface hits with no members.
+  const obbPoints = acceptedCenters.length > 0 ? acceptedCenters : inliers;
+  return finish(indices, fitOBB(obbPoints, { mode: "upright", dominantLayer: options.dominantLayer }), {
     searchVolume,
     scannedCount,
-    candidateCount: candidateIndex.length,
+    candidateCount: candidates.length,
     rejectedBackgroundCount: rejectedBackground,
+    rejectedPeerCount: rejectedPeer,
+    rejectedScaleCount: rejectedScale,
+    rejectedFloorCount: rejectedFloor,
+    slabScaleExemptCount: slabScaleExempt,
+    upperSurfaceY,
+    minHitY,
+    peerSurfaceHitsRemoved,
+    excludedPeerViews,
     rejectedInsufficientVotesCount: rejectedInsufficient,
     abstainedOccludedCount: abstainedOccluded,
+    depthToleranceByView,
   });
 }
