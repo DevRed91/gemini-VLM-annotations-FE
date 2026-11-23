@@ -111,7 +111,11 @@ export function snapshotSplatRay(
   const raycaster = new THREE.Raycaster();
   raycaster.ray.origin.set(origin.x, origin.y, origin.z);
   raycaster.ray.direction.set(direction.x, direction.y, direction.z);
-  const intersects = raycaster.intersectObject(binding.splat);
+  // Annotation OBB helpers are children of the splat for rendering, but are
+  // not raycast targets. Recursive intersection would invoke LineSegments2's
+  // screen-space raycast without a Raycaster camera and could return box edges
+  // instead of splat surfaces.
+  const intersects = raycaster.intersectObject(binding.splat, false);
   return { ray: raycaster.ray, intersection: intersects.length > 0 ? intersects[0] : null };
 }
 

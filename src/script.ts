@@ -1,6 +1,9 @@
 /// <reference types="vite/client" />
 
 import * as THREE from "three";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import {
   SparkControls,
   SparkRenderer,
@@ -114,7 +117,7 @@ interface ViewerAnnotation {
   position: THREE.Vector3;
   apartmentId: string;
   worldObb?: OBB;
-  helper?: THREE.LineSegments;
+  helper?: LineSegments2;
   fallbackTint?: HoverTint;
   selectionOwner?: GaussianObjectHighlighter;
   selectionId?: number;
@@ -616,10 +619,10 @@ export class SplatViewer {
       annotation.helper.visible = selected;
 
       if (!annotation.helperBaseColor) {
-        const material = annotation.helper.material as THREE.LineBasicMaterial;
+        const material = annotation.helper.material as LineMaterial;
         annotation.helperBaseColor = material.color.clone();
       }
-      const material = annotation.helper.material as THREE.LineBasicMaterial;
+      const material = annotation.helper.material as LineMaterial;
       material.color.copy(selected
         ? SplatViewer.CHAT_SELECTED_COLOR
         : annotation.helperBaseColor);
@@ -712,7 +715,7 @@ export class SplatViewer {
 
     // 2. Intersect with the SplatMesh
     if (this.currentSplat) {
-      const intersects = raycaster.intersectObject(this.currentSplat);
+      const intersects = raycaster.intersectObject(this.currentSplat, false);
       return {
         ray: raycaster.ray,
         intersection: intersects.length > 0 ? intersects[0] : null,
@@ -751,45 +754,22 @@ export class SplatViewer {
     const finiteSize = fitted && [fitted.size.x, fitted.size.y, fitted.size.z].every(Number.isFinite);
     const usableObb = Boolean(fitted && finiteSize && fitted.size.x > 1e-4 && fitted.size.y > 1e-4 && fitted.size.z > 1e-4);
     const selectionKey = `multi-view:${selected.objectId}`;
-    let selectionOwner: GaussianObjectHighlighter | null = null;
-    let selectionLabelId: number | undefined;
-
-    if (usableObb && lift.indices.length > 0) {
-      selectionOwner = this.objectHighlighter;
-      if (!selectionOwner) {
-        if (!isNonLodSplat(splat)) return null;
-        selectionOwner = await GaussianObjectHighlighter.create(splat);
-        if (!current()) {
-          selectionOwner.dispose();
-          return null;
-        }
-        this.objectHighlighter = selectionOwner;
-      }
-      const previousSelection = selectionOwner.getIndexSelection(selectionKey)?.selectedIds;
-      const maskUpdate = await selectionOwner.selectIndices(selectionKey, lift.indices);
-      if (!maskUpdate) return null;
-      if (!current()) {
-        // A recapture can invalidate the handoff without replacing the world.
-        // Restore the previous membership (or clear the newly created label)
-        // if this request's result is still the active selection.
-        const active = selectionOwner.getIndexSelection(selectionKey)?.selectedIds;
-        const stillOurs = active && active.length === lift.indices.length && active.every((index, i) => index === lift.indices[i]);
-        if (stillOurs) {
-          if (previousSelection) await selectionOwner.selectIndices(selectionKey, previousSelection);
-          else await selectionOwner.clear(maskUpdate.labelId);
-        }
-        return null;
-      }
-      if (maskUpdate.acceptedCount === 0) return null;
-      selectionLabelId = maskUpdate.labelId;
-    } else if (selectionOwner === null) {
-      selectionOwner = this.objectHighlighter;
+    const highlighter = this.objectHighlighter;
+    const previousLabel = highlighter?.getLabelForObject(selectionKey);
+    if (highlighter && previousLabel !== undefined) {
+      await highlighter.clear(previousLabel);
+      if (!current()) return null;
     }
+    let multiViewHighlight: { owner: GaussianObjectHighlighter; labelId: number } | null = null;
+    // Re-enable the multi-view R8UI shader highlight here when desired.
+    // multiViewHighlight = usableObb && lift.indices.length > 0
+    //   ? await this.highlightMultiViewSelection(splat, selectionKey, lift.indices, current)
+    //   : null;
 
     let anchor: THREE.Vector3;
     let worldObb: OBB | undefined;
     let localObb: OBB | undefined;
-    if (usableObb && selectionOwner && selectionLabelId !== undefined) {
+    if (usableObb) {
       worldObb = new OBB(fitted!);
       localObb = obbWorldToLocal(worldObb, splat);
       anchor = obbTopSurfaceCenter(worldObb);
@@ -800,13 +780,6 @@ export class SplatViewer {
         new THREE.Vector3(),
       ).multiplyScalar(1 / lift.surfacePoints.length);
       if (![anchor.x, anchor.y, anchor.z].every(Number.isFinite)) return null;
-      const previousLabel = selectionOwner?.getLabelForObject(selectionKey);
-      if (previousLabel !== undefined) {
-        await selectionOwner!.clear(previousLabel);
-        if (!current()) return null;
-      }
-      selectionOwner = null;
-      selectionLabelId = undefined;
     }
 
     if (!current()) return null;
@@ -817,9 +790,10 @@ export class SplatViewer {
         height: worldObb.size.y,
         depth: worldObb.size.z,
       }, worldObb, localObb } : {}),
-      selectionOwner: selectionOwner ?? undefined,
-      selectionId: selectionLabelId,
+      selectionOwner: multiViewHighlight?.owner,
+      selectionId: multiViewHighlight?.labelId,
       sourceObjectId: selected.objectId,
+      suppressHighlight: true,
     });
 
     // Replace the previous annotation for this Gemini identity without clearing
@@ -831,6 +805,39 @@ export class SplatViewer {
       this.removeAnnotationVisual(duplicate);
     }
     return annotation;
+  }
+
+  private async highlightMultiViewSelection(
+    splat: SplatMesh,
+    selectionKey: string,
+    indices: Uint32Array | readonly number[],
+    current: () => boolean,
+  ): Promise<{ owner: GaussianObjectHighlighter; labelId: number } | null> {
+    let owner = this.objectHighlighter;
+    if (!owner) {
+      if (!isNonLodSplat(splat)) return null;
+      owner = await GaussianObjectHighlighter.create(splat);
+      if (!current()) {
+        owner.dispose();
+        return null;
+      }
+      this.objectHighlighter = owner;
+    }
+
+    const previousSelection = owner.getIndexSelection(selectionKey)?.selectedIds;
+    const maskUpdate = await owner.selectIndices(selectionKey, indices);
+    if (!maskUpdate) return null;
+    if (!current()) {
+      const active = owner.getIndexSelection(selectionKey)?.selectedIds;
+      const stillOurs = active && active.length === indices.length && active.every((index, i) => index === indices[i]);
+      if (stillOurs) {
+        if (previousSelection) await owner.selectIndices(selectionKey, previousSelection);
+        else await owner.clear(maskUpdate.labelId);
+      }
+      return null;
+    }
+    if (maskUpdate.acceptedCount === 0) return null;
+    return { owner, labelId: maskUpdate.labelId };
   }
 
   // Create a simple UI helper function
@@ -862,6 +869,7 @@ export class SplatViewer {
       selectionOwner?: GaussianObjectHighlighter;
       selectionId?: number;
       sourceObjectId?: string;
+      suppressHighlight?: boolean;
       persistMetadata?: boolean;
     } = {},
   ): ViewerAnnotation {
@@ -949,18 +957,21 @@ export class SplatViewer {
         );
         const edges = new THREE.EdgesGeometry(box);
         box.dispose();
-        const helperMaterial = new THREE.LineBasicMaterial({
+        const wideEdges = new LineSegmentsGeometry().fromEdgesGeometry(edges);
+        edges.dispose();
+        const helperMaterial = new LineMaterial({
           color: new THREE.Color().setRGB(...color),
+          linewidth: 4,
         });
-        const helper = new THREE.LineSegments(edges, helperMaterial);
+        const helper = new LineSegments2(wideEdges, helperMaterial);
         helper.position.copy(options.localObb.position);
         helper.quaternion.copy(options.localObb.quaternion);
-        helper.visible = false;
+        helper.visible = true;
         this.currentSplat.add(helper);
         annotation.helper = helper;
         annotation.helperBaseColor = helperMaterial.color.clone();
 
-        if (ENABLE_GAUSSIAN_HIGHLIGHTING && !options.selectionOwner) {
+        if (ENABLE_GAUSSIAN_HIGHLIGHTING && !options.selectionOwner && !options.suppressHighlight) {
           const fallback = new HoverTint(this.currentSplat, {
             space: "splat",
             color,
@@ -1466,8 +1477,8 @@ export async function loadWorld(url: string) {
 }
 
 // Initial load
-// const initialURL = "/Apartment.sog";
-const initialURL = "/office_space.sog";
+const initialURL = "/Apartment.sog";
+// const initialURL = "/office_space.sog";
 // const initialURL = "/BiltmoreGaussianSplat.sog";
 void loadWorld(initialURL).catch((error) => console.error("Initial world load failed:", error));
 
